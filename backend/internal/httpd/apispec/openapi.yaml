@@ -9322,6 +9322,8 @@ components:
       type: object
     TriggerReviewRequest:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           enum:
           - claude-code
