@@ -907,6 +907,7 @@
 	"shell.spawningDots": "시작 중...",
 	"shell.terminateSession": "세션 종료",
 	"shell.terminateNamed": "{{title}} 종료",
+	"shell.update": "업데이트",
 	"shell.updateAvailable": "업데이트 사용 가능",
 	"shell.updateCheckFailed": "업데이트 확인 실패",
 	"shell.updatedAt": "업데이트: {{time}}",

@@ -42,6 +42,7 @@ const {
 	dragOvers,
 	dragStarts,
 	downloadUpdateMock,
+	installUpdateMock,
 	getMock,
 	historyBackMock,
 	historyForwardMock,
@@ -50,6 +51,7 @@ const {
 	renameSessionMock,
 	spawnMock,
 	updateStatusMock,
+	updateStatusListeners,
 	commandPaletteEnabled,
 } = vi.hoisted(
 	() => ({
@@ -71,7 +73,9 @@ const {
 		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
 		downloadUpdateMock: vi.fn(),
+		installUpdateMock: vi.fn(),
 		checkUpdateMock: vi.fn(),
+		updateStatusListeners: new Set<(status: unknown) => void>(),
 		commandPaletteEnabled: { current: true },
 		compactRailCanGoBack: { current: false },
 		compactRailCanGoForward: { current: false },
@@ -147,7 +151,12 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 				...actual.aoBridge.updates,
 				getStatus: updateStatusMock,
 				download: downloadUpdateMock,
+				install: installUpdateMock,
 				check: checkUpdateMock,
+				onStatus: (listener: (status: unknown) => void) => {
+					updateStatusListeners.add(listener);
+					return () => updateStatusListeners.delete(listener);
+				},
 			},
 		},
 	};
@@ -384,7 +393,9 @@ beforeEach(() => {
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
+	updateStatusListeners.clear();
 	downloadUpdateMock.mockReset().mockResolvedValue(undefined);
+	installUpdateMock.mockReset().mockResolvedValue(undefined);
 	checkUpdateMock.mockReset().mockResolvedValue(undefined);
 	mockParams.projectId = undefined;
 	mockParams.sessionId = undefined;
@@ -1977,8 +1988,11 @@ describe("Sidebar", () => {
 		// Both footer variants (expanded row and collapsed rail icon) are mounted.
 		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
-		expect(screen.getByText("Update available")).toBeInTheDocument();
+		expect(screen.getByText("Update")).toBeInTheDocument();
 		expect(screen.getByText("v9.9.9")).toBeInTheDocument();
+		const activeButton = buttons.find((button) => button.tabIndex === 0);
+		const activeSettings = screen.getAllByLabelText("Settings").find((button) => button.tabIndex === 0);
+		expect(activeSettings?.parentElement).toContainElement(activeButton ?? null);
 		// Nothing is staged yet, so the restart action must not be offered.
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 
@@ -1991,7 +2005,8 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
-		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
+		expect(screen.getAllByLabelText("Downloading… 42%").length).toBeGreaterThan(0);
+		expect(screen.getByText("42%")).toBeInTheDocument();
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 		// A download already in flight must not offer a second one.
 		expect(screen.queryByLabelText(/Download update/)).not.toBeInTheDocument();
@@ -2010,6 +2025,46 @@ describe("Sidebar", () => {
 
 		await userEvent.click(buttons[0]);
 		expect(checkUpdateMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("reacts through checking, available, downloading, error, and install-ready sidebar states", async () => {
+		renderSidebar();
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+		expect(screen.queryByText("Update")).not.toBeInTheDocument();
+
+		act(() => {
+			for (const listener of updateStatusListeners) listener({ state: "checking" });
+		});
+		expect(screen.getAllByLabelText("Checking for updates…").length).toBeGreaterThan(0);
+
+		act(() => {
+			for (const listener of updateStatusListeners) listener({ state: "available", version: "9.9.9" });
+		});
+		const download = screen.getAllByLabelText("Download update v9.9.9").find((button) => button.tabIndex === 0);
+		expect(download).toBeDefined();
+		await userEvent.click(download!);
+		expect(downloadUpdateMock).toHaveBeenCalledOnce();
+
+		act(() => {
+			for (const listener of updateStatusListeners) listener({ state: "downloading", version: "9.9.9", percent: 37 });
+		});
+		expect(screen.getAllByLabelText("Downloading… 37%").length).toBeGreaterThan(0);
+
+		act(() => {
+			for (const listener of updateStatusListeners) listener({ state: "error", message: "offline" });
+		});
+		const retry = screen.getAllByLabelText("Retry update check").find((button) => button.tabIndex === 0);
+		expect(retry).toBeDefined();
+		await userEvent.click(retry!);
+		expect(checkUpdateMock).toHaveBeenCalledOnce();
+
+		act(() => {
+			for (const listener of updateStatusListeners) listener({ state: "downloaded", version: "9.9.9", stagedAt: Date.now() });
+		});
+		const restart = screen.getAllByLabelText("Restart to install update v9.9.9").find((button) => button.tabIndex === 0);
+		expect(restart).toBeDefined();
+		await userEvent.click(restart!);
+		expect(installUpdateMock).toHaveBeenCalledOnce();
 	});
 
 	it("keeps a staged build's restart action ahead of the failing-checks retry", async () => {

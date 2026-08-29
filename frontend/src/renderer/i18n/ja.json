@@ -907,6 +907,7 @@
 	"shell.spawningDots": "起動中...",
 	"shell.terminateSession": "セッションを終了",
 	"shell.terminateNamed": "{{title}} を終了",
+	"shell.update": "更新",
 	"shell.updateAvailable": "アップデートがあります",
 	"shell.updateCheckFailed": "アップデートの確認に失敗しました",
 	"shell.updatedAt": "更新: {{time}}",

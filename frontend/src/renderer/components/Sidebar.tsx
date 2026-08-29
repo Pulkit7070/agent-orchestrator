@@ -30,6 +30,7 @@ import {
 	FolderOpen,
 	LogIn,
 	LogOut,
+	Loader2,
 	MoreVertical,
 	PanelLeft,
 	Pin,
@@ -886,7 +887,6 @@ export function Sidebar({
 					hidden={isCollapsed}
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5"
 				>
-					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudSignInRow tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
@@ -902,19 +902,22 @@ export function Sidebar({
 						<Smartphone aria-hidden="true" />
 						<span className="tracking-tight">{t("settings.connectMobile")}</span>
 					</button>
-					<button
-						aria-label={t("shell.settings")}
-						className={cn(
-							NAV_ROW_CLASS,
-							"flex h-[42px] w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
-						)}
-						onClick={() => selection.goGlobalSettings()}
-						tabIndex={isCollapsed ? -1 : 0}
-						type="button"
-					>
-						<Settings aria-hidden="true" />
-						<span className="tracking-tight">{t("shell.settings")}</span>
-					</button>
+					<div className="flex min-w-0 items-center gap-1">
+						<button
+							aria-label={t("shell.settings")}
+							className={cn(
+								NAV_ROW_CLASS,
+								"flex h-[42px] min-w-0 flex-1 items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+							)}
+							onClick={() => selection.goGlobalSettings()}
+							tabIndex={isCollapsed ? -1 : 0}
+							type="button"
+						>
+							<Settings aria-hidden="true" />
+							<span className="tracking-tight">{t("shell.settings")}</span>
+						</button>
+						<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					</div>
 				</div>
 				<div
 					aria-hidden={!isCollapsed || undefined}
@@ -2045,108 +2048,112 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	);
 }
 
-// UpdateStatusRow makes update activity visible and actionable from the
-// sidebar: an available build downloads on click, progress reports itself, and
-// a staged build becomes the restart action. Idle/checking states stay quiet so
-// routine background checks do not flash in the sidebar.
+// Compact updater affordance paired with Settings. It consumes the same status
+// stream as the Updates pane: no local updater state machine or optimistic
+// transitions live here.
 function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
-	if (status.state === "available") {
-		// A manual check leaves autoDownload off, so without this the row would
-		// announce an update and offer nothing to act on.
+	if (status.state === "checking") {
 		return (
-			<button
-				aria-label={
-					status.version
-						? t("shell.downloadUpdateVersion", { version: status.version })
-						: t("shell.downloadUpdate")
-				}
-				className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
-				onClick={() => void aoBridge.updates.download()}
-				tabIndex={tabIndex}
-				type="button"
-			>
-				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
-				<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.updateAvailable")}</span>
-				{status.version && <span className="sr-only">{t("shell.versionAvailable", { version: status.version })}</span>}
-				<span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
-			</button>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span
+						aria-label={t("settings.updates.checking")}
+						aria-live="polite"
+						className="grid size-9 shrink-0 place-items-center rounded-lg text-passive [&_svg]:size-4"
+						role="status"
+					>
+						<Loader2 aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="top">{t("settings.updates.checking")}</TooltipContent>
+			</Tooltip>
+		);
+	}
+	if (status.state === "available") {
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={status.version ? t("shell.downloadUpdateVersion", { version: status.version }) : t("shell.downloadUpdate")}
+						className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-primary/12 px-2.5 text-caption font-semibold text-primary transition-colors hover:bg-primary/18 [&_svg]:size-3.5"
+						onClick={() => void aoBridge.updates.download()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<Download aria-hidden="true" />
+						<span>{t("shell.update")}</span>
+						<span aria-hidden="true" className="size-1.5 rounded-full bg-red-500" />
+						{status.version && <span className="sr-only">{t("shell.versionAvailable", { version: status.version })}</span>}
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="top">{t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })}</TooltipContent>
+			</Tooltip>
 		);
 	}
 	if (status.state === "downloading") {
 		const percent = Math.min(100, Math.max(0, status.percent ?? 0));
 		return (
-			<div
-				aria-live="polite"
-				className={cn(NAV_ROW_CLASS, "relative flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
-				role="status"
-			>
-				<span className="relative grid size-icon-lg shrink-0 place-items-center" aria-hidden="true">
-					<svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 24 24" fill="none">
-						<circle cx="12" cy="12" r="9" className="stroke-current/15" strokeWidth="2.5" />
-						<circle
-							cx="12"
-							cy="12"
-							r="9"
-							className="stroke-primary transition-[stroke-dasharray] duration-300"
-							strokeWidth="2.5"
-							strokeLinecap="round"
-							strokeDasharray={`${percent * 0.5655} 56.55`}
-						/>
-					</svg>
-				</span>
-				<span className="min-w-0 flex-1 truncate tabular-nums">
-					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
-				</span>
-			</div>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span
+						aria-label={t("settings.updates.downloading", { percent })}
+						aria-live="polite"
+						className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-primary/8 px-2.5 text-caption font-semibold tabular-nums text-primary"
+						role="status"
+					>
+						<Download aria-hidden="true" className="size-3.5" />
+						{percent}%
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="top">{t("settings.updates.downloading", { percent })}</TooltipContent>
+			</Tooltip>
 		);
 	}
-	// Ranked below a staged build on purpose: an update ready to install is more
-	// actionable than "checks are failing". Only when there is nothing better to
-	// show does the failure take the row — it used to render nothing at all,
-	// which reads as "up to date" rather than "checks are not getting through".
+	// A staged build outranks the failing-check flag carried from an earlier
+	// automatic check.
 	if (status.state !== "downloaded") {
-		if (status.checksFailing !== true) return null;
+		if (status.state !== "error" && status.checksFailing !== true) return null;
 		return (
-			<button
-				aria-label={t("shell.retryUpdateCheck")}
-				className="flex w-full items-center gap-2.5 rounded-lg border border-warning/35 bg-warning/12 p-2.5 text-left text-control font-medium text-warning transition-colors hover:bg-warning/18 [&_svg]:text-warning"
-				onClick={() => void aoBridge.updates.check()}
-				tabIndex={tabIndex}
-				type="button"
-			>
-				<AlertTriangle aria-hidden="true" className="size-icon-lg shrink-0" />
-				<span className="min-w-0 flex-1">
-					<span className="block truncate tracking-tight">{t("shell.updateCheckFailed")}</span>
-					<span className="block truncate text-caption font-normal text-warning">
-						{t("shell.retryUpdateCheck")}
-					</span>
-				</span>
-			</button>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("shell.retryUpdateCheck")}
+						className="grid size-9 shrink-0 place-items-center rounded-lg bg-warning/12 text-warning transition-colors hover:bg-warning/18 [&_svg]:size-4"
+						onClick={() => void aoBridge.updates.check()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<AlertTriangle aria-hidden="true" />
+						<span className="sr-only">{t("shell.updateCheckFailed")}</span>
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="top">{t("shell.updateCheckFailed")} · {t("shell.retryUpdateCheck")}</TooltipContent>
+			</Tooltip>
 		);
 	}
 	const escalated = status.escalated === true;
 	return (
-		<button
-			aria-label={
-				status.version
-					? t("shell.restartInstallUpdateVersion", { version: status.version })
-					: t("shell.restartInstallUpdate")
-			}
-			className={cn(
-				NAV_ROW_CLASS,
-				"flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
-				escalated && "text-working hover:text-working [&_svg]:text-working",
-			)}
-			onClick={() => void aoBridge.updates.install()}
-			tabIndex={tabIndex}
-			type="button"
-		>
-			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
-			<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.restartToUpdate")}</span>
-			{status.version && <span className="sr-only">{t("shell.versionReady", { version: status.version })}</span>}
-			<span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", escalated ? "bg-working" : "bg-red-500")} />
-		</button>
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={status.version ? t("shell.restartInstallUpdateVersion", { version: status.version }) : t("shell.restartInstallUpdate")}
+					className={cn(
+						"flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-caption font-semibold transition-colors [&_svg]:size-3.5",
+						escalated ? "bg-working/12 text-working hover:bg-working/18" : "bg-primary/12 text-primary hover:bg-primary/18",
+					)}
+					onClick={() => void aoBridge.updates.install()}
+					tabIndex={tabIndex}
+					type="button"
+				>
+					<RefreshCw aria-hidden="true" />
+					<span>{t("shell.restart")}</span>
+					<span aria-hidden="true" className={cn("size-1.5 rounded-full", escalated ? "bg-working" : "bg-red-500")} />
+					{status.version && <span className="sr-only">{t("shell.versionReady", { version: status.version })}</span>}
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="top">{t("settings.updates.downloaded")}</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -2154,6 +2161,23 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 // and a staged one installs; an in-flight download is informational.
 function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
 	const { t } = useTranslation();
+	if (status.state === "checking") {
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span
+						aria-label={t("settings.updates.checking")}
+						aria-live="polite"
+						className="grid size-9 place-items-center rounded-lg text-passive [&_svg]:size-4"
+						role="status"
+					>
+						<Loader2 aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="right">{t("settings.updates.checking")}</TooltipContent>
+			</Tooltip>
+		);
+	}
 	if (status.state === "available") {
 		const label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
 		return (
@@ -2197,7 +2221,7 @@ function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex
 	}
 	// Same ranking as the expanded row: a staged build outranks the failure.
 	if (status.state !== "downloaded") {
-		if (status.checksFailing !== true) return null;
+		if (status.state !== "error" && status.checksFailing !== true) return null;
 		return (
 			<Tooltip>
 				<TooltipTrigger asChild>

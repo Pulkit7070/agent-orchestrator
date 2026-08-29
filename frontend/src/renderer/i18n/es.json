@@ -917,6 +917,7 @@
 	"shell.spawningDots": "Iniciando...",
 	"shell.terminateSession": "Terminar sesión",
 	"shell.terminateNamed": "Terminar {{title}}",
+	"shell.update": "Actualizar",
 	"shell.updateAvailable": "Actualización disponible",
 	"shell.updateCheckFailed": "Error al buscar actualizaciones",
 	"shell.updatedAt": "Actualizado {{time}}",

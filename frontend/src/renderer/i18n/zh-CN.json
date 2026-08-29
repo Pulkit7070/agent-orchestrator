@@ -893,6 +893,7 @@
 	"shell.spawningDots": "正在启动...",
 	"shell.terminateSession": "终止会话",
 	"shell.terminateNamed": "终止 {{title}}",
+	"shell.update": "更新",
 	"shell.updateAvailable": "有可用更新",
 	"shell.updateCheckFailed": "检查更新失败",
 	"shell.updatedAt": "更新于 {{time}}",

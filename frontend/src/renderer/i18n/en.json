@@ -910,6 +910,7 @@
 	"shell.spawningDots": "Spawning...",
 	"shell.terminateSession": "Terminate session",
 	"shell.terminateNamed": "Terminate {{title}}",
+	"shell.update": "Update",
 	"shell.updateAvailable": "Update available",
 	"shell.updateCheckFailed": "Update check failed",
 	"shell.updatedAt": "Updated {{time}}",

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { installFakeBridge } from "./support/fake-bridge";
 
-test("downloaded update keeps the full version readable and actions aligned", async ({ page }) => {
+test("downloaded update keeps the full version readable and surfaces restart in Settings and the sidebar", async ({ page }) => {
 	await page.setViewportSize({ width: 1010, height: 700 });
 	await page.emulateMedia({ colorScheme: "dark" });
 	await installFakeBridge(page, {
@@ -29,9 +29,11 @@ test("downloaded update keeps the full version readable and actions aligned", as
 	const lineCount = await version.evaluate((element) => element.getClientRects().length);
 	expect(lineCount).toBe(1);
 
-	const restartBox = await page.getByRole("button", { name: "Restart & install" }).boundingBox();
-	const checkBox = await page.getByRole("button", { name: "Check for updates" }).boundingBox();
-	expect(restartBox).not.toBeNull();
-	expect(checkBox).not.toBeNull();
-	expect(Math.abs((restartBox?.height ?? 0) - (checkBox?.height ?? 0))).toBeLessThan(1);
+	await page.getByRole("button", { name: "Close settings" }).click();
+	const sidebarRestart = page.getByRole("button", {
+		name: "Restart to install update v0.12.8-nightly.202608241447",
+	});
+	await expect(sidebarRestart).toBeVisible();
+	await expect(sidebarRestart).toContainText("Restart");
+	await expect(sidebarRestart.locator("xpath=..").getByRole("button", { name: "Settings" })).toBeVisible();
 });
