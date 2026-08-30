@@ -1388,5 +1388,6 @@
 	"inspector.usage.processedTokens": "Tokens processed",
 	"inspector.usage.processedTokensAria": "{{count}} tokens processed",
 	"inspector.usage.processedTokensUnavailable": "Processed tokens unavailable",
-	"settings.project.reviewer": "Reviewer"
+	"settings.project.reviewer": "Reviewer",
+	"settings.models.customAgentModelAria": "Custom {{label}} model"
 }
