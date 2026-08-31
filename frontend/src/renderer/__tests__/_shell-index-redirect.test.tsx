@@ -16,8 +16,11 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({
-		data: routeMocks.workspaces,
+	useWorkspaceRootRedirect: () => ({
+		data:
+			routeMocks.workspaces.length === 1
+				? { id: routeMocks.workspaces[0]?.id, kind: routeMocks.workspaces[0]?.kind }
+				: undefined,
 		isSuccess: routeMocks.queryState === "success",
 	}),
 }));
