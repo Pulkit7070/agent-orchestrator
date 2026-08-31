@@ -32,7 +32,7 @@ vi.mock("./useCloudOrg", () => ({
 	useCloudOrg: () => ({ org: cloudState.org, isLoading: false, error: undefined, ready: cloudState.ready }),
 }));
 
-import { useWorkspaceQuery, useWorkspaceTraySessions } from "./useWorkspaceQuery";
+import { useWorkspaceQuery, useWorkspaceRootRedirect, useWorkspaceTraySessions } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
 	// The hook pins its own retry policy; retryDelay 0 keeps the error tests fast.
@@ -464,5 +464,15 @@ describe("useWorkspaceQuery", () => {
 			{ projectId: "proj-1", projectName: "my-app", sessionId: "needs-input", title: "Needs input", zone: "action" },
 			{ projectId: "proj-1", projectName: "my-app", sessionId: "mergeable", title: "Mergeable", zone: "merge" },
 		]);
+	});
+
+	it("selects only the identity needed for the scratch root redirect", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "scratch", name: "Scratch", kind: "scratch", path: "/tmp/scratch" }] }, error: undefined },
+		});
+
+		const { result } = renderHook(() => useWorkspaceRootRedirect(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+		expect(result.current.data).toEqual({ id: "scratch", kind: "scratch" });
 	});
 });

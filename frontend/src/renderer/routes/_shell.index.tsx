@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { MigrationPopup } from "../components/MigrationPopup";
 import { SessionsBoard } from "../components/SessionsBoard";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceRootRedirect } from "../hooks/useWorkspaceQuery";
 
 export const Route = createFileRoute("/_shell/")({
 	component: ShellIndex,
@@ -10,13 +10,12 @@ export const Route = createFileRoute("/_shell/")({
 
 function ShellIndex() {
 	const navigate = useNavigate();
-	const workspaceQuery = useWorkspaceQuery();
+	const workspaceQuery = useWorkspaceRootRedirect();
 
 	useEffect(() => {
 		if (!workspaceQuery.isSuccess) return;
-		const workspaces = workspaceQuery.data ?? [];
-		if (workspaces.length !== 1) return;
-		const [workspace] = workspaces;
+		const workspace = workspaceQuery.data;
+		if (!workspace) return;
 		if (workspace.id !== "scratch" || workspace.kind !== "scratch") return;
 		void navigate({
 			to: "/projects/$projectId",

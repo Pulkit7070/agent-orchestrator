@@ -395,3 +395,28 @@ export function useWorkspaceTraySessions() {
 	}, [cloudEntries, local.data]);
 	return { ...local, data };
 }
+
+type WorkspaceRootRedirect = Pick<WorkspaceSummary, "id" | "kind"> | undefined;
+
+function selectWorkspaceRootRedirect(workspaces: WorkspaceSummary[]): WorkspaceRootRedirect {
+	if (workspaces.length !== 1) return undefined;
+	const [workspace] = workspaces;
+	return workspace ? { id: workspace.id, kind: workspace.kind } : undefined;
+}
+
+/**
+ * Root-board routing only cares whether exactly one scratch workspace exists.
+ * Keep that redirect check independent from session-level workspace updates.
+ */
+export function useWorkspaceRootRedirect() {
+	const local = useQuery({ ...workspaceQueryOptions, select: selectWorkspaceRootRedirect });
+	const cloud = useCloudProjectsQuery();
+	const { org, ready } = useCloudOrg();
+	const data = useMemo(() => {
+		if (local.data === undefined || !ready || !org?.id || !cloud.data || cloud.data.length === 0) return local.data;
+		// A cloud project means this is not a single-workspace install. We only
+		// need a sentinel, not the cloud project's full display shape.
+		return undefined;
+	}, [cloud.data, local.data, org?.id, ready]);
+	return { ...local, data };
+}
