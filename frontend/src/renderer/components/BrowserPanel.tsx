@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	DndContext,
@@ -451,6 +451,12 @@ export function BrowserPanelView({
 		},
 		[selectTab],
 	);
+	const handleCloseTab = useCallback(
+		(tabId: string) => {
+			void closeTab(tabId);
+		},
+		[closeTab],
+	);
 
 	const annotationStatusLabel =
 		status === "picking"
@@ -498,8 +504,8 @@ export function BrowserPanelView({
 							{tabs.map((tab) => (
 								<SortableBrowserTopTab
 									key={tab.id}
-									onClose={() => void closeTab(tab.id)}
-									onSelect={() => void handleSelectTab(tab.id)}
+									onClose={handleCloseTab}
+									onSelect={handleSelectTab}
 									onlyTab={tabs.length === 1}
 									selected={tab.id === activeTabId}
 									tab={tab}
@@ -850,7 +856,7 @@ export function BrowserPanelView({
 	);
 }
 
-function SortableBrowserTopTab({
+const SortableBrowserTopTab = memo(function SortableBrowserTopTab({
 	tab,
 	selected,
 	onlyTab,
@@ -860,8 +866,8 @@ function SortableBrowserTopTab({
 	tab: BrowserViewModel["tabs"][number];
 	selected: boolean;
 	onlyTab: boolean;
-	onSelect: () => void;
-	onClose: () => void;
+	onSelect: (tabId: string) => void;
+	onClose: (tabId: string) => void;
 }) {
 	const { t } = useTranslation();
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tab.id });
@@ -882,7 +888,7 @@ function SortableBrowserTopTab({
 				{...listeners}
 				aria-selected={selected}
 				className="browser-panel__tab-select"
-				onClick={onSelect}
+				onClick={() => void onSelect(tab.id)}
 				role="tab"
 				tabIndex={selected ? 0 : -1}
 				title={label.title}
@@ -899,7 +905,7 @@ function SortableBrowserTopTab({
 				aria-label={closeLabel}
 				className="browser-panel__tab-close"
 				disabled={onlyTab}
-				onClick={onClose}
+				onClick={() => onClose(tab.id)}
 				title={onlyTab ? t("browser.onlyTab") : closeLabel}
 				type="button"
 			>
@@ -907,7 +913,7 @@ function SortableBrowserTopTab({
 			</button>
 		</div>
 	);
-}
+});
 
 function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {
 	if (!active && !activity?.active) return "";
