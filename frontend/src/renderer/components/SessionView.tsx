@@ -517,21 +517,26 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// session's worktree (the project id is only the fallback when the session's
 	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
-		openShellTerminal.mutate(
-			{ projectId: session?.workspaceId, sessionId },
-			{
-				onSuccess: (shell) => {
-					setActiveShellTerminal(shell.handleId);
-					setTerminalTarget({
-						generation: shell.createdAt,
-						kind: "shell",
-						handleId: shell.handleId,
-						sessionId,
-						title: shell.title,
-					});
-				},
+		const shell = openShellTerminal.open({ projectId: session?.workspaceId, sessionId }, {
+			onSuccess: (openedShell) => {
+				setActiveShellTerminal(openedShell.handleId);
+				setTerminalTarget({
+					generation: openedShell.createdAt,
+					kind: "shell",
+					handleId: openedShell.handleId,
+					sessionId,
+					title: openedShell.title,
+				});
 			},
-		);
+		});
+		setActiveShellTerminal(shell.handleId);
+		setTerminalTarget({
+			generation: shell.createdAt,
+			kind: "shell",
+			handleId: shell.handleId,
+			sessionId,
+			title: shell.title,
+		});
 	}, [openShellTerminal, sessionId, session?.workspaceId, setActiveShellTerminal]);
 
 	const selectShellTerminal = useCallback(
@@ -869,7 +874,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		session && !isOrchestrator ? (
 			<TopbarButton
 				aria-label={t("shortcut.new-shell-terminal")}
-				disabled={openShellTerminal.isPending}
 				onClick={addShellTerminal}
 				title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
 				type="button"

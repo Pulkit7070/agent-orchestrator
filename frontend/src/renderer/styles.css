@@ -4719,3 +4719,23 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 	padding-inline: var(--space-2_5);
 	padding-block: var(--space-2);
 }
+
+/* Direct manipulation needs immediate feedback. Hovering an action should not
+ * spend 150ms fading its background, text, or icon: it makes dense controls
+ * feel sluggish and adds needless paint work while the pointer moves. Keep an
+ * existing press-scale transition, which is an intentional confirmation of a
+ * click rather than hover decoration. */
+:where(button, a[href], [role="button"], [role="menuitem"], [role="option"]) {
+	transition-property: none !important;
+}
+
+:where(button, a[href], [role="button"], [role="menuitem"], [role="option"]):active {
+	transition-property: transform, scale !important;
+}
+
+:where(button, a[href], [role="button"], [role="menuitem"], [role="option"]) :where(
+		svg,
+		[class*="transition"]
+	) {
+	transition-property: none !important;
+}
