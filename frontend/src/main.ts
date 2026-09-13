@@ -2706,6 +2706,46 @@ app.whenReady().then(async () => {
 		console.error("failed to write app-state marker:", err);
 	}
 
+	// A pre-fix bundle cannot be patched retroactively. After the maintained
+	// /Applications build runs, offer to retire older AO copies that can still
+	// overwrite it if Finder, Spotlight, or an old Dock tile launches them.
+	try {
+		const { formatStaleAppCopies, retireStaleMacAppCopies } = await import("./main/stale-app-copies");
+		await retireStaleMacAppCopies({
+			platform: process.platform,
+			isPackaged: app.isPackaged,
+			runningPath: resolveBundlePath(),
+			runningVersion: app.getVersion(),
+			confirm: async (copies) => {
+				const result = await dialog.showMessageBox({
+					type: "warning",
+					buttons: ["Move old copies to Trash", "Not now"],
+					defaultId: 0,
+					cancelId: 1,
+					title: "Remove old AO copies",
+					message: "Old copies of Agent Orchestrator can replace your updated app.",
+					detail: `${formatStaleAppCopies(copies)}\n\nMove these copies to Trash to prevent another downgrade. Your AO projects and sessions will not be removed.`,
+					noLink: true,
+				});
+				return result.response === 0;
+			},
+			trashItem: (candidate) => shell.trashItem(candidate),
+			reportFailures: async (paths) => {
+				await dialog.showMessageBox({
+					type: "warning",
+					buttons: ["OK"],
+					defaultId: 0,
+					title: "Some old copies could not be removed",
+					message: "Move these copies to Trash manually before launching AO again.",
+					detail: paths.join("\n"),
+					noLink: true,
+				});
+			},
+		});
+	} catch (err) {
+		console.warn("stale AO copy cleanup failed:", err);
+	}
+
 	const keybindingRunFile = runFilePath();
 	if (keybindingRunFile) {
 		keybindingOverrides = await readKeybindingOverrides(path.dirname(keybindingRunFile));
