@@ -74,10 +74,12 @@ import {
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	OPEN_SETTINGS_SHORTCUT_CHANNEL,
 	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
 	SET_TERMINAL_FOCUSED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
+import type { ThemePreference } from "./renderer/lib/theme";
 import { createTrayController, type TrayController } from "./main/tray";
 import { createTrayLifecycle, isTrayEnabled } from "./main/tray-lifecycle";
 import {
@@ -270,6 +272,14 @@ async function clearRendererTelemetryQueues(): Promise<void> {
 
 let mainWindow: BaseWindow | null = null;
 let trayController: TrayController | null = null;
+// Theme preference lives in the renderer's store (localStorage); the renderer
+// reports it here via theme:set on mount and on every change, so the tray's
+// Theme submenu can reflect the current choice. Defaults until the shell mounts.
+let currentThemePreference: ThemePreference = "system";
+// Last-known update preferences, kept in step with the persisted file so the
+// tray's Updates submenu shows the right channel/auto-check state. Refreshed
+// whenever the settings are written (from the tray or the in-app Settings UI).
+let currentUpdateSettings: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 const trayLifecycle = createTrayLifecycle({
 	getWindow: () => null,
 	getContents: () => getShellWebContents(),
@@ -1949,12 +1959,28 @@ ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 // preview WebContentsViews (which follow prefers-color-scheme) flip in step with
 // the shell. The three preference values map 1:1 onto themeSource; "system" keeps
 // both the preview and the shell's own matchMedia following the OS.
+function applyThemePreference(preference: ThemePreference): void {
+	nativeTheme.themeSource = preference;
+	syncNativeWindowBackground();
+	currentThemePreference = preference;
+	trayController?.setThemePreference(preference);
+}
+
 ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") => {
 	if (preference === "light" || preference === "dark" || preference === "system") {
-		nativeTheme.themeSource = preference;
-		syncNativeWindowBackground();
+		applyThemePreference(preference);
 	}
 });
+
+// Persist update preferences and mirror them onto the tray. Used by the tray's
+// own Updates submenu and to refresh the tray after the in-app Settings UI writes.
+async function persistTrayUpdateSettings(next: UpdateSettings): Promise<void> {
+	const runFile = runFilePath();
+	if (!runFile) return;
+	await setUpdateSettings(path.dirname(runFile), next);
+	currentUpdateSettings = next;
+	trayController?.setUpdateSettings(next);
+}
 
 ipcMain.handle("theme:persist-terminal", (_event, scheme: unknown) => {
 	if (scheme === "light" || scheme === "dark") {
@@ -2275,6 +2301,8 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	const runFile = runFilePath();
 	if (!runFile) return;
 	await setUpdateSettings(path.dirname(runFile), settings);
+	currentUpdateSettings = settings;
+	trayController?.setUpdateSettings(settings);
 });
 
 ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
@@ -2718,11 +2746,45 @@ app.whenReady().then(async () => {
 		: { ...DEFAULT_UI_SETTINGS };
 	soundNotificationsEnabled = initialUiSettings.soundNotificationsEnabled;
 	terminalShellPreference = initialUiSettings.terminalShell;
+	currentUpdateSettings = keybindingRunFile
+		? await readUpdateSettings(path.dirname(keybindingRunFile))
+		: currentUpdateSettings;
 	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
 		trayController = createTrayController({
 			focusWindow: focusMainWindow,
 			openSession: trayLifecycle.openSession,
+			openSettings: () => {
+				focusMainWindow();
+				getShellWebContents()?.send(OPEN_SETTINGS_SHORTCUT_CHANNEL);
+			},
 			locale: initialUiSettings.locale,
+			themePreference: currentThemePreference,
+			onThemeSelect: (preference) => {
+				applyThemePreference(preference);
+				getShellWebContents()?.send("theme:changed", preference);
+			},
+			updateSettings: currentUpdateSettings,
+			onUpdateChannelSelect: (channel) => {
+				const next: UpdateSettings = {
+					...currentUpdateSettings,
+					channel,
+					nightlyAck: channel === "nightly",
+					feature: null,
+				};
+				const runFile = runFilePath();
+				void persistTrayUpdateSettings(next).then(() => {
+					// Mirror the Settings UI: switching channel kicks a check so the new
+					// channel's build is discovered and staged right away.
+					if (runFile) void checkForUpdatesNow(path.dirname(runFile), { settings: next });
+				});
+			},
+			onUpdateEnabledToggle: (enabled) => {
+				void persistTrayUpdateSettings({ ...currentUpdateSettings, enabled });
+			},
+			onCheckForUpdates: () => {
+				const runFile = runFilePath();
+				if (runFile) void checkForUpdatesNow(path.dirname(runFile));
+			},
 		});
 	}
 	await createWindow();

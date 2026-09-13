@@ -320,6 +320,16 @@ const api = {
 		set: (preference: "light" | "dark" | "system") => ipcRenderer.invoke("theme:set", preference) as Promise<void>,
 		persistTerminal: (scheme: "light" | "dark") =>
 			ipcRenderer.invoke("theme:persist-terminal", scheme) as Promise<void>,
+		// Fired when the theme changes from outside the renderer (e.g. the tray's
+		// Theme submenu), so the renderer's own store mirrors it without a restart.
+		onChanged: (listener: (preference: "light" | "dark" | "system") => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, preference: "light" | "dark" | "system") =>
+				listener(preference);
+			ipcRenderer.on("theme:changed", wrapped);
+			return () => {
+				ipcRenderer.off("theme:changed", wrapped);
+			};
+		},
 	},
 	menu: {
 		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,

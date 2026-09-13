@@ -3,7 +3,9 @@ import path from "node:path";
 import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions } from "electron";
 import { catalogFor, type MessageKey, type PluralMessageKey } from "../renderer/i18n/messages";
 import type { AppLocale } from "../shared/ui-locale";
+import type { ThemePreference } from "../renderer/lib/theme";
 import type { TrayAttentionState, TrayAttentionZone, TrayOpenSessionTarget, TraySessionEntry } from "../shared/tray";
+import type { UpdateSettings } from "./update-settings";
 
 const MAX_MENU_SESSIONS = 8;
 
@@ -25,6 +27,8 @@ function trayIconPath(): string | undefined {
 export type TrayController = {
 	setState(state: TrayAttentionState): void;
 	setLocale(locale: AppLocale): void;
+	setThemePreference(preference: ThemePreference): void;
+	setUpdateSettings(settings: UpdateSettings): void;
 	clear(): void;
 	dispose(): void;
 };
@@ -32,7 +36,14 @@ export type TrayController = {
 export type TrayControllerOptions = {
 	focusWindow: () => void;
 	openSession: (target: TrayOpenSessionTarget) => void;
+	openSettings: () => void;
 	locale: AppLocale;
+	themePreference: ThemePreference;
+	onThemeSelect: (preference: ThemePreference) => void;
+	updateSettings: UpdateSettings;
+	onUpdateChannelSelect: (channel: UpdateSettings["channel"]) => void;
+	onUpdateEnabledToggle: (enabled: boolean) => void;
+	onCheckForUpdates: () => void;
 };
 
 export function createTrayController(options: TrayControllerOptions): TrayController | null {
@@ -45,6 +56,8 @@ export function createTrayController(options: TrayControllerOptions): TrayContro
 	const tray = new Tray(icon);
 	let sessions: TraySessionEntry[] = [];
 	let catalog = catalogFor(options.locale);
+	let themePreference = options.themePreference;
+	let updateSettings = options.updateSettings;
 
 	const t = (key: MessageKey, vars?: Record<string, string | number>): string => {
 		const raw = catalog[key] ?? key;
@@ -64,9 +77,58 @@ export function createTrayController(options: TrayControllerOptions): TrayContro
 		};
 	};
 
+	const themeMenu = (): MenuItemConstructorOptions => ({
+		label: t("settings.theme"),
+		submenu: [
+			{
+				label: t("settings.theme.system"),
+				type: "radio",
+				checked: themePreference === "system",
+				click: () => options.onThemeSelect("system"),
+			},
+			{
+				label: t("settings.theme.light"),
+				type: "radio",
+				checked: themePreference === "light",
+				click: () => options.onThemeSelect("light"),
+			},
+			{
+				label: t("settings.theme.dark"),
+				type: "radio",
+				checked: themePreference === "dark",
+				click: () => options.onThemeSelect("dark"),
+			},
+		],
+	});
+
+	const updatesMenu = (): MenuItemConstructorOptions => ({
+		label: t("settings.updates"),
+		submenu: [
+			{
+				label: t("settings.updates.channel.stable"),
+				type: "radio",
+				checked: updateSettings.channel === "latest",
+				click: () => options.onUpdateChannelSelect("latest"),
+			},
+			{
+				label: t("settings.updates.channel.nightly"),
+				type: "radio",
+				checked: updateSettings.channel === "nightly",
+				click: () => options.onUpdateChannelSelect("nightly"),
+			},
+			{ type: "separator" },
+			{
+				label: t("settings.updates.automatic"),
+				type: "checkbox",
+				checked: updateSettings.enabled,
+				click: () => options.onUpdateEnabledToggle(!updateSettings.enabled),
+			},
+			{ label: t("settings.updates.check"), click: () => options.onCheckForUpdates() },
+		],
+	});
+
 	const render = () => {
 		const count = sessions.length;
-		tray.setTitle(count > 0 ? String(count) : "");
 		tray.setToolTip(count > 0 ? tPlural("tray.attentionTooltip", count) : "Agent Orchestrator");
 
 		const items: MenuItemConstructorOptions[] = [];
@@ -94,6 +156,10 @@ export function createTrayController(options: TrayControllerOptions): TrayContro
 			}
 		}
 		items.push({ type: "separator" });
+		items.push(themeMenu());
+		items.push(updatesMenu());
+		items.push({ label: t("settings.title"), click: () => options.openSettings() });
+		items.push({ type: "separator" });
 		items.push({ label: t("tray.show"), click: () => options.focusWindow() });
 		items.push({ label: t("tray.quit"), role: "quit" });
 		tray.setContextMenu(Menu.buildFromTemplate(items));
@@ -108,6 +174,14 @@ export function createTrayController(options: TrayControllerOptions): TrayContro
 		},
 		setLocale(locale) {
 			catalog = catalogFor(locale);
+			render();
+		},
+		setThemePreference(preference) {
+			themePreference = preference;
+			render();
+		},
+		setUpdateSettings(settings) {
+			updateSettings = settings;
 			render();
 		},
 		clear() {

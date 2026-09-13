@@ -184,6 +184,7 @@ function ShellLayout() {
 	const toggleSidebar = useUiStore((state) => state.toggleSidebar);
 	const sidebarHasLayout = useUiStore(sidebarOccupiesLayout);
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
+	const setThemePreference = useUiStore((state) => state.setThemePreference);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	const requestCreateProjectFromPath = useUiStore((state) => state.requestCreateProjectFromPath);
@@ -764,6 +765,12 @@ function ShellLayout() {
 	useEffect(() => {
 		void aoBridge.theme?.persistTerminal(resolvedTheme);
 	}, [resolvedTheme]);
+
+	// The tray's Theme submenu can change the preference while the window is open;
+	// mirror that back into the renderer's own store so the shell (and localStorage)
+	// update without a restart. The store no-ops on an unchanged value, so this
+	// does not loop with the theme:set effect above.
+	useEffect(() => aoBridge.theme?.onChanged?.((preference) => setThemePreference(preference)), [setThemePreference]);
 
 	// Follow OS appearance while the user keeps Theme on System — updates
 	// resolvedTheme (and thus React consumers) without writing light/dark to storage.
