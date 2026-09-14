@@ -14,27 +14,31 @@ export interface BundleMetadata {
 export interface StaleAppCopy {
 	path: string;
 	version: string;
+	device: number;
+	inode: number;
 }
 
 interface DiscoveryDependencies {
-	pathKind: (candidate: string) => Promise<"directory" | "symlink" | "other">;
+	fileIdentity: (candidate: string) => Promise<{ device: number; inode: number } | null>;
 	readMetadata: (candidate: string) => Promise<BundleMetadata>;
 }
 
 interface RetirementDependencies {
 	findCopies: () => Promise<StaleAppCopy[]>;
 	confirm: (copies: StaleAppCopy[]) => Promise<boolean>;
+	revalidate: (copy: StaleAppCopy) => Promise<boolean>;
 	trashItem: (candidate: string) => Promise<void>;
 	reportFailures: (paths: string[]) => Promise<void>;
 }
 
-interface MacRetirementOptions extends Omit<RetirementDependencies, "findCopies"> {
+interface MacRetirementOptions extends Omit<RetirementDependencies, "findCopies" | "revalidate"> {
 	platform: NodeJS.Platform | string;
 	isPackaged: boolean;
 	runningPath: string;
 	runningVersion: string;
 	homeDir?: string;
 	findCopies?: () => Promise<StaleAppCopy[]>;
+	revalidate?: (copy: StaleAppCopy) => Promise<boolean>;
 	discoveryDependencies?: Partial<DiscoveryDependencies>;
 }
 
@@ -53,10 +57,10 @@ export async function readBundleMetadata(bundlePath: string): Promise<BundleMeta
 }
 
 const defaultDiscoveryDependencies: DiscoveryDependencies = {
-	pathKind: async (candidate) => {
+	fileIdentity: async (candidate) => {
 		const stats = await lstat(candidate);
-		if (stats.isSymbolicLink()) return "symlink";
-		return stats.isDirectory() ? "directory" : "other";
+		if (stats.isSymbolicLink() || !stats.isDirectory()) return null;
+		return { device: stats.dev, inode: stats.ino };
 	},
 	readMetadata: readBundleMetadata,
 };
@@ -76,18 +80,39 @@ export async function findStaleAppCopies(
 	const copies: StaleAppCopy[] = [];
 	for (const candidate of candidates) {
 		try {
-			if (await dependencies.pathKind(candidate) !== "directory") continue;
+			const identity = await dependencies.fileIdentity(candidate);
+			if (!identity) continue;
 			const metadata = await dependencies.readMetadata(candidate);
 			if (metadata.bundleId !== AO_BUNDLE_ID) continue;
 			const candidateVersion = semver.valid(metadata.version ?? "");
 			if (candidateVersion && semver.lt(candidateVersion, runningVersion)) {
-				copies.push({ path: candidate, version: candidateVersion });
+				copies.push({ path: candidate, version: candidateVersion, ...identity });
 			}
 		} catch {
 			// Missing or unreadable candidates are left untouched.
 		}
 	}
 	return copies;
+}
+
+export async function isUnchangedStaleAppCopy(
+	copy: StaleAppCopy,
+	runningVersion: string,
+	dependencyOverrides: Partial<DiscoveryDependencies> = {},
+): Promise<boolean> {
+	const currentVersion = semver.valid(runningVersion);
+	if (!currentVersion) return false;
+	const dependencies = { ...defaultDiscoveryDependencies, ...dependencyOverrides };
+	try {
+		const identity = await dependencies.fileIdentity(copy.path);
+		if (!identity || identity.device !== copy.device || identity.inode !== copy.inode) return false;
+		const metadata = await dependencies.readMetadata(copy.path);
+		return metadata.bundleId === AO_BUNDLE_ID
+			&& metadata.version === copy.version
+			&& semver.lt(copy.version, currentVersion);
+	} catch {
+		return false;
+	}
 }
 
 export function formatStaleAppCopies(copies: StaleAppCopy[]): string {
@@ -101,6 +126,7 @@ export async function retireStaleAppCopies(dependencies: RetirementDependencies)
 	const failures: string[] = [];
 	for (const copy of copies) {
 		try {
+			if (!(await dependencies.revalidate(copy))) continue;
 			await dependencies.trashItem(copy.path);
 		} catch {
 			failures.push(copy.path);
@@ -120,6 +146,11 @@ export async function retireStaleMacAppCopies(options: MacRetirementOptions): Pr
 			homeDir: options.homeDir ?? os.homedir(),
 		}, options.discoveryDependencies)),
 		confirm: options.confirm,
+		revalidate: options.revalidate ?? ((copy) => isUnchangedStaleAppCopy(
+			copy,
+			options.runningVersion,
+			options.discoveryDependencies,
+		)),
 		trashItem: options.trashItem,
 		reportFailures: options.reportFailures,
 	});

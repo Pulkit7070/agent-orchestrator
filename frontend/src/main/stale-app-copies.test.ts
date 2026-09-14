@@ -6,6 +6,7 @@ import path from "node:path";
 import {
 	AO_BUNDLE_ID,
 	findStaleAppCopies,
+	isUnchangedStaleAppCopy,
 	readBundleMetadata,
 	retireStaleAppCopies,
 	retireStaleMacAppCopies,
@@ -17,6 +18,7 @@ const RUNNING_PATH = "/Applications/Agent Orchestrator.app";
 const RUNNING_VERSION = "0.13.1-nightly.202609121623";
 const DOWNLOADS_COPY = "/Users/user/Downloads/Agent Orchestrator.app";
 const DESKTOP_COPY = "/Users/user/Desktop/Agent Orchestrator.app";
+const ORIGINAL_IDENTITY = { device: 1, inode: 10 };
 
 describe("readBundleMetadata", () => {
 	const temporaryDirectories: string[] = [];
@@ -45,11 +47,11 @@ describe("readBundleMetadata", () => {
 
 describe("findStaleAppCopies", () => {
 	function dependencies(options: {
-		kinds?: Record<string, "directory" | "symlink" | "other">;
+		identities?: Record<string, { device: number; inode: number } | null>;
 		metadata?: Record<string, BundleMetadata>;
 	} = {}) {
 		return {
-			pathKind: vi.fn(async (candidate: string) => options.kinds?.[candidate] ?? "other" as const),
+			fileIdentity: vi.fn(async (candidate: string) => options.identities?.[candidate] ?? null),
 			readMetadata: vi.fn(async (candidate: string) => {
 				const metadata = options.metadata?.[candidate];
 				if (!metadata) throw new Error("unreadable");
@@ -60,7 +62,10 @@ describe("findStaleAppCopies", () => {
 
 	it("finds valid older AO copies only in Downloads and Desktop", async () => {
 		const deps = dependencies({
-			kinds: { [DOWNLOADS_COPY]: "directory", [DESKTOP_COPY]: "directory" },
+			identities: {
+				[DOWNLOADS_COPY]: ORIGINAL_IDENTITY,
+				[DESKTOP_COPY]: { device: 1, inode: 11 },
+			},
 			metadata: {
 				[DOWNLOADS_COPY]: { bundleId: AO_BUNDLE_ID, version: "0.10.3" },
 				[DESKTOP_COPY]: { bundleId: AO_BUNDLE_ID, version: "0.12.0" },
@@ -71,23 +76,22 @@ describe("findStaleAppCopies", () => {
 			runningVersion: RUNNING_VERSION,
 			homeDir: "/Users/user",
 		}, deps)).resolves.toEqual([
-			{ path: DOWNLOADS_COPY, version: "0.10.3" },
-			{ path: DESKTOP_COPY, version: "0.12.0" },
+			{ path: DOWNLOADS_COPY, version: "0.10.3", ...ORIGINAL_IDENTITY },
+			{ path: DESKTOP_COPY, version: "0.12.0", device: 1, inode: 11 },
 		]);
-		expect(deps.pathKind).toHaveBeenCalledTimes(2);
+		expect(deps.fileIdentity).toHaveBeenCalledTimes(2);
 	});
 
 	it.each([
-		["another app", "directory", { bundleId: "com.example.other", version: "0.10.3" }],
-		["an unreadable version", "directory", { bundleId: AO_BUNDLE_ID, version: null }],
-		["an invalid version", "directory", { bundleId: AO_BUNDLE_ID, version: "broken" }],
-		["the same version", "directory", { bundleId: AO_BUNDLE_ID, version: RUNNING_VERSION }],
-		["a newer version", "directory", { bundleId: AO_BUNDLE_ID, version: "0.14.0" }],
-		["a symlink", "symlink", { bundleId: AO_BUNDLE_ID, version: "0.10.3" }],
-		["a regular file", "other", { bundleId: AO_BUNDLE_ID, version: "0.10.3" }],
-	] as const)("leaves %s untouched", async (_label, kind, metadata) => {
+		["another app", ORIGINAL_IDENTITY, { bundleId: "com.example.other", version: "0.10.3" }],
+		["an unreadable version", ORIGINAL_IDENTITY, { bundleId: AO_BUNDLE_ID, version: null }],
+		["an invalid version", ORIGINAL_IDENTITY, { bundleId: AO_BUNDLE_ID, version: "broken" }],
+		["the same version", ORIGINAL_IDENTITY, { bundleId: AO_BUNDLE_ID, version: RUNNING_VERSION }],
+		["a newer version", ORIGINAL_IDENTITY, { bundleId: AO_BUNDLE_ID, version: "0.14.0" }],
+		["a symlink or regular file", null, { bundleId: AO_BUNDLE_ID, version: "0.10.3" }],
+	] as const)("leaves %s untouched", async (_label, identity, metadata) => {
 		const deps = dependencies({
-			kinds: { [DOWNLOADS_COPY]: kind },
+			identities: { [DOWNLOADS_COPY]: identity },
 			metadata: { [DOWNLOADS_COPY]: metadata },
 		});
 
@@ -103,18 +107,23 @@ describe("findStaleAppCopies", () => {
 			runningVersion: "development",
 			homeDir: "/Users/user",
 		}, deps)).resolves.toEqual([]);
-		expect(deps.pathKind).not.toHaveBeenCalled();
+		expect(deps.fileIdentity).not.toHaveBeenCalled();
 	});
 });
 
 describe("retireStaleAppCopies", () => {
-	const stale: StaleAppCopy = { path: DOWNLOADS_COPY, version: "0.10.3" };
+	const stale: StaleAppCopy = {
+		path: DOWNLOADS_COPY,
+		version: "0.10.3",
+		...ORIGINAL_IDENTITY,
+	};
 
 	it("requires confirmation before moving a copy to Trash", async () => {
 		const trashItem = vi.fn(async () => undefined);
 		await retireStaleAppCopies({
 			findCopies: async () => [stale],
 			confirm: async () => false,
+			revalidate: async () => true,
 			trashItem,
 			reportFailures: vi.fn(),
 		});
@@ -126,10 +135,45 @@ describe("retireStaleAppCopies", () => {
 		await retireStaleAppCopies({
 			findCopies: async () => [stale],
 			confirm: async () => true,
+			revalidate: async () => true,
 			trashItem: async () => { throw new Error("denied"); },
 			reportFailures,
 		});
 		expect(reportFailures).toHaveBeenCalledWith([DOWNLOADS_COPY]);
+	});
+
+	it("leaves a replacement untouched when the path changes while confirmation is open", async () => {
+		let approve: (() => void) | undefined;
+		let markConfirmStarted: (() => void) | undefined;
+		const confirmStarted = new Promise<void>((resolve) => {
+			markConfirmStarted = resolve;
+		});
+		const confirm = new Promise<boolean>((resolve) => {
+			approve = () => resolve(true);
+		});
+		let identity = ORIGINAL_IDENTITY;
+		const dependencies = {
+			fileIdentity: async () => identity,
+			readMetadata: async () => ({ bundleId: AO_BUNDLE_ID, version: "0.10.3" }),
+		};
+		const trashItem = vi.fn(async () => undefined);
+		const retirement = retireStaleAppCopies({
+			findCopies: async () => [stale],
+			confirm: async () => {
+				markConfirmStarted?.();
+				return confirm;
+			},
+			revalidate: (copy) => isUnchangedStaleAppCopy(copy, RUNNING_VERSION, dependencies),
+			trashItem,
+			reportFailures: vi.fn(),
+		});
+
+		await confirmStarted;
+		identity = { device: 1, inode: 99 };
+		approve?.();
+		await retirement;
+
+		expect(trashItem).not.toHaveBeenCalled();
 	});
 });
 
