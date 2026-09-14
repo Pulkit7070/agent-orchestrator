@@ -430,3 +430,61 @@ func TestContextPositionReadsLastNotTotal(t *testing.T) {
 		t.Error("a non-usage notification was read as a context position")
 	}
 }
+
+// A retrying error is transient: Codex sends one `error` notification per retry
+// attempt for the same turn (2/5, 3/5, ... then "waiting for network") before
+// either succeeding or giving up. Each of those must collapse onto the same
+// running activity row, keyed by turn id, rather than stacking a terminal error
+// per attempt.
+func TestNormalizeErrorWillRetryCollapsesToRunningActivity(t *testing.T) {
+	params := `{"error":{"message":"stream disconnected before completion","additionalDetails":"retrying 2/5"},"threadId":"th1","turnId":"tu1","willRetry":true}`
+
+	first := normalizeOne(t, "error", params)
+	if first.Kind != ports.ChatEventActivityStarted {
+		t.Fatalf("kind = %q, want %q", first.Kind, ports.ChatEventActivityStarted)
+	}
+	if first.ActivityKind != domain.ActivityKindError {
+		t.Fatalf("activity kind = %q, want %q", first.ActivityKind, domain.ActivityKindError)
+	}
+	if first.ActivityStatus != domain.ActivityStatusRunning {
+		t.Fatalf("activity status = %q, want %q", first.ActivityStatus, domain.ActivityStatusRunning)
+	}
+	if first.ProviderTurnID != "tu1" {
+		t.Fatalf("turn id = %q, want tu1", first.ProviderTurnID)
+	}
+	if first.Err != nil {
+		t.Fatalf("a retrying error must not be terminal, got Err = %v", first.Err)
+	}
+	if first.Summary != "stream disconnected before completion: retrying 2/5" {
+		t.Fatalf("summary = %q", first.Summary)
+	}
+
+	// A second attempt on the same turn must land on the same provider item id so
+	// it updates the existing row instead of appending a new one.
+	second := normalizeOne(t, "error",
+		`{"error":{"message":"stream disconnected before completion","additionalDetails":"retrying 3/5"},"threadId":"th1","turnId":"tu1","willRetry":true}`)
+	if second.ProviderItemID != first.ProviderItemID {
+		t.Fatalf("retry item id = %q, want %q (same as first attempt)", second.ProviderItemID, first.ProviderItemID)
+	}
+}
+
+// willRetry:false means the provider has stopped trying: this is the terminal
+// failure for the turn and must surface as a real error, not another running
+// activity row.
+func TestNormalizeErrorWithoutRetryIsTerminal(t *testing.T) {
+	ev := normalizeOne(t, "error",
+		`{"error":{"message":"rate limit exceeded"},"threadId":"th1","turnId":"tu2","willRetry":false}`)
+
+	if ev.Kind != ports.ChatEventError {
+		t.Fatalf("kind = %q, want %q", ev.Kind, ports.ChatEventError)
+	}
+	if ev.ProviderTurnID != "tu2" {
+		t.Fatalf("turn id = %q, want tu2", ev.ProviderTurnID)
+	}
+	if ev.Err == nil {
+		t.Fatal("a non-retrying error must be terminal, got nil Err")
+	}
+	if ev.Err.Error() != "provider error: rate limit exceeded" {
+		t.Fatalf("err = %q", ev.Err.Error())
+	}
+}

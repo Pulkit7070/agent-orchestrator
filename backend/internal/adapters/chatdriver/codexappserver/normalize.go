@@ -646,9 +646,47 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		}}
 
 	case codexproto.MethodError:
+		var p codexproto.ErrorNotification
+		if err := json.Unmarshal(n.Params, &p); err != nil {
+			// The params did not parse as the generated notification. Surface the
+			// raw shape rather than dropping the error: a truncated summary is worse
+			// than nothing only if it hides that something failed.
+			return []ports.ChatEvent{{
+				Kind: ports.ChatEventError,
+				Err:  fmt.Errorf("provider error: %s", truncateForLog(n.Params)),
+			}}
+		}
+		turnID := firstNonEmpty(p.TurnID, turnIDFallback(n.Params))
+		message := providerErrorMessage(p.Error)
+		if p.WillRetry {
+			// A retrying error is transient: the provider will attempt the same turn
+			// again. Codex emits one such notification per attempt (2/5 through 5/5,
+			// then "waiting for network"), and a terminal error row per attempt would
+			// stack a column of identical failures. Collapse them onto one running,
+			// turn-scoped activity keyed by a stable provider item id so each retry
+			// updates the same row. It is settled by later output or turn completion,
+			// not presented as a terminal failure.
+			return []ports.ChatEvent{{
+				Kind:           ports.ChatEventActivityStarted,
+				ProviderTurnID: turnID,
+				ProviderItemID: retryItemID(turnID),
+				ActivityKind:   domain.ActivityKindError,
+				ActivityStatus: domain.ActivityStatusRunning,
+				Summary:        message,
+				Detail: encodeDetail(map[string]any{
+					"error":     message,
+					"willRetry": true,
+					"threadId":  p.ThreadID,
+					"turnId":    p.TurnID,
+				}),
+			}}
+		}
+		// willRetry is false: the provider is done trying. This is terminal for the
+		// turn and stays a failed error row.
 		return []ports.ChatEvent{{
-			Kind: ports.ChatEventError,
-			Err:  fmt.Errorf("provider error: %s", truncateForLog(n.Params)),
+			Kind:           ports.ChatEventError,
+			ProviderTurnID: turnID,
+			Err:            fmt.Errorf("provider error: %s", message),
 		}}
 
 	default:
@@ -753,6 +791,33 @@ func reviewItemID(reviewID string) string {
 		return ""
 	}
 	return "ao-review-" + reviewID
+}
+
+// retryItemID is the stable provider item id for a turn's retry activity. Keying
+// it on the turn id collapses every retry notification for one turn onto a single
+// row; a build that omits the turn id still gets one shared row per session rather
+// than a new one per attempt.
+func retryItemID(turnID string) string {
+	if turnID == "" {
+		return "ao-provider-retry"
+	}
+	return "ao-provider-retry-" + turnID
+}
+
+// providerErrorMessage renders a TurnError as a human summary instead of raw JSON.
+// AdditionalDetails, when present, carries the connection context the acceptance
+// criteria asks to preserve.
+func providerErrorMessage(e codexproto.TurnError) string {
+	msg := strings.TrimSpace(e.Message)
+	if msg == "" {
+		msg = "provider error"
+	}
+	if e.AdditionalDetails != nil {
+		if details := strings.TrimSpace(*e.AdditionalDetails); details != "" {
+			msg = msg + ": " + details
+		}
+	}
+	return msg
 }
 
 // autoReviewStatus maps a review outcome onto an activity status. Anything that is
