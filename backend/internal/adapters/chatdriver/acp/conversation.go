@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -95,6 +96,7 @@ type conversation struct {
 	activeTurn         string
 	settlingTurn       string
 	turnCancel         context.CancelFunc
+	idleStalled        bool
 	interrupt          *interruptAttempt
 	pending            map[string]*parkedPermission
 	pendingInputs      map[string]*parkedInput
@@ -131,6 +133,12 @@ type conversation struct {
 	compactionBefore  int64
 	compactionSummary string
 	compactedTurn     string
+
+	// lastActivityNanos is the wall-clock time of the most recent provider signal
+	// on the active turn (turn start or any session update). The idle watchdog
+	// reads it without the main mutex so a stalled turn cannot block on lock
+	// contention with the update path.
+	lastActivityNanos atomic.Int64
 
 	eventMu      sync.RWMutex
 	events       chan ports.ChatEvent
@@ -506,6 +514,7 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 	c.prepared = nil
 	c.activeTurn = turn.id
 	c.settlingTurn = ""
+	c.idleStalled = false
 	turnCtx, cancel := context.WithCancel(context.Background())
 	c.turnCancel = cancel
 	sessionID := c.sessionID
@@ -525,6 +534,14 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 func (c *conversation) runTurn(ctx context.Context, sessionID string, turn preparedTurn) {
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: turn.id})
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerBusy})
+	// Start counting idle time from turn start and watch for a silent agent. The
+	// watchdog is scoped to this goroutine: stopWatch fires when runTurn returns
+	// (after finishPrompt) so a completed turn never leaves the watcher running,
+	// and turnCancel/Interrupt cancels ctx to stop it early.
+	c.noteActivity()
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	go c.watchTurnIdle(watchCtx, turn.id)
 	// ACP message ids are opaque idempotency/correlation keys. Preserve AO's
 	// durable client id when possible so an agent that echoes it from session/load
 	// can be reconciled without provider-specific knowledge. Some agents (notably
@@ -540,6 +557,9 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 		Prompt:    turn.prompt,
 	})
 
+	// Stop the watchdog before settling so a tick in flight cannot surface a stall
+	// while finishPrompt is closing the turn. finishPrompt settles any open row.
+	stopWatch()
 	c.finishPrompt(turn.id, resp, err)
 }
 
@@ -558,6 +578,13 @@ func (c *conversation) finishPrompt(
 	isCompaction := c.compactingTurnID != "" && c.compactingTurnID == turnID
 	c.mu.Unlock()
 	c.settleOpenItems(turnID)
+	// A turn that reaches completion is no longer waiting on the agent. Settle any
+	// surfaced idle row here, before ChatEventTurnCompleted, so the running "waiting
+	// for the agent" activity closes rather than lingering when the watchdog is
+	// cancelled on return.
+	if c.clearIdleStall() {
+		c.settleIdleStall(turnID, domain.ActivityStatusCompleted)
+	}
 	interruptedLocally := false
 	if interrupt != nil && interrupt.turnID == turnID {
 		// ACP cancellation and Prompt completion can race. Wait for the sender's
