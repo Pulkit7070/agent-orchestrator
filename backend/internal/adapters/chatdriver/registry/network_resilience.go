@@ -12,17 +12,18 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 type NetworkResilienceStatus string
 
 const (
-	// NetworkResilienceHandled: AO surfaces retry, connection, or stall state for
-	// this harness, verified against captured provider behavior. No live network
+	// NetworkResilienceHandled means AO surfaces retry, connection, or stall state
+	// for this harness, verified against captured provider behavior. No live network
 	// call is needed to reproduce it.
 	NetworkResilienceHandled NetworkResilienceStatus = "handled"
-	// NetworkResilienceUpstreamBlocked: AO surfaces the terminal failure faithfully,
-	// but the provider emits no retry or backoff telemetry for AO to display.
-	// Closing the gap requires an upstream change, not an AO one; AO must not invent
-	// counts the provider never sent.
+	// NetworkResilienceUpstreamBlocked means AO surfaces the terminal failure
+	// faithfully, but the provider emits no retry or backoff telemetry for AO to
+	// display. Closing the gap requires an upstream change, not an AO one; AO must
+	// not invent counts the provider never sent.
 	NetworkResilienceUpstreamBlocked NetworkResilienceStatus = "upstream-blocked"
-	// NetworkResilienceUnverified: not exercised locally because the agent or its
-	// required bridge was not installed. Not claimed as supported until it is.
+	// NetworkResilienceUnverified means the harness was not exercised locally because
+	// the agent or its required bridge was not installed. It is not claimed as
+	// supported until it is.
 	NetworkResilienceUnverified NetworkResilienceStatus = "unverified"
 )
 
