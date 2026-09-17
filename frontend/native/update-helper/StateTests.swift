@@ -11,7 +11,12 @@ struct StateTests {
         let valid = try completion("{\"version\":\"1.2.3\",\"appPath\":\"/Applications/AO.app\",\"parentPID\":123,\"startedAt\":1000,\"pid\":456}")
         assert(state.stage(now: 1001, parentAlive: true, completion: nil, failure: nil) == .closing)
         assert(state.stage(now: 1001, parentAlive: false, completion: nil, failure: nil) == .installing)
-        if case .recovery = state.stage(now: 31_000, parentAlive: true, completion: nil, failure: nil) {} else { fatalError("closing deadline") }
+        // A slow-but-healthy close stays hidden well past the old 30s cutoff.
+        assert(state.stage(now: 31_000, parentAlive: true, completion: nil, failure: nil) == .closing)
+        assert(state.stage(now: 120_000, parentAlive: false, completion: nil, failure: nil) == .installing)
+        // Only a genuinely stuck update surfaces a window: no close after 3 minutes,
+        if case .recovery = state.stage(now: 181_000, parentAlive: true, completion: nil, failure: nil) {} else { fatalError("closing deadline") }
+        // or no reopen after 3 minutes.
         if case .recovery = state.stage(now: 181_000, parentAlive: false, completion: nil, failure: nil) {} else { fatalError("restart deadline") }
         state.keepWaiting(now: 190_000)
         assert(state.stage(now: 190_001, parentAlive: false, completion: nil, failure: nil) == .installing)
