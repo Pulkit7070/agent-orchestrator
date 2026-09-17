@@ -329,8 +329,10 @@ let escalationStateDir: string | undefined;
 // they open the app; this interval only governs sessions left open for a long
 // stretch. Kept to once a day on every channel: 15-minute nightly polling and
 // hourly stable polling were redundant background work and, on a cold network,
-// a source of launch-time check errors. Persistent failures still surface via
-// the failing-checks nudge, not the interval.
+// a source of launch-time check errors. Trade-off: the failing-checks nudge
+// needs consecutive automatic failures, and every launch supplies one, so users
+// who restart still trip it quickly; but a session left open continuously on a
+// broken updater now waits days rather than hours before the nudge appears.
 const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
 let automaticUpdateTimerIntervalMs: number | undefined;
