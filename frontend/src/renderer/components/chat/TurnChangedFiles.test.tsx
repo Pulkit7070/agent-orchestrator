@@ -158,6 +158,60 @@ describe("TurnChangedFiles", () => {
 		expect(onOpenFile).toHaveBeenCalledWith("alpha/workspace-test.txt");
 	});
 
+	// Two repos in one workspace each change a file of the same name. With both
+	// file_change entries in the turn, each subdir-qualified row must resolve to and
+	// open its own repo's file, never collapse both to a single bare basename.
+	it("keeps two same-named files in different repos distinct", async () => {
+		const cwd = "/Users/me/.ao/dev/data/worktrees/demo/demo-1";
+		const onOpenFile = vi.fn();
+		render(
+			<TurnChangedFiles
+				diff={{
+					files: [
+						{ path: "alpha/workspace-test.txt", additions: 1, deletions: 0, status: "added" },
+						{ path: "beta/workspace-test.txt", additions: 2, deletions: 0, status: "added" },
+					],
+				}}
+				items={[
+					{
+						kind: "activity",
+						id: "cmd-1",
+						sequence: 1,
+						revision: 0,
+						activityKind: "command",
+						status: "completed",
+						summary: "Ran command",
+						detail: { cwd, command: "ls" },
+						createdAt: new Date().toISOString(),
+					},
+					{
+						kind: "activity",
+						id: "fc-1",
+						sequence: 2,
+						revision: 0,
+						activityKind: "file_change",
+						status: "completed",
+						summary: "Edited files",
+						detail: {
+							files: [
+								{ path: `${cwd}/alpha/workspace-test.txt`, additions: 1, deletions: 0, status: "added" },
+								{ path: `${cwd}/beta/workspace-test.txt`, additions: 2, deletions: 0, status: "added" },
+							],
+						},
+						createdAt: new Date().toISOString(),
+					},
+				]}
+				onOpenFile={onOpenFile}
+			/>,
+		);
+		expect(screen.getByText("alpha/workspace-test.txt")).toBeInTheDocument();
+		expect(screen.getByText("beta/workspace-test.txt")).toBeInTheDocument();
+		await userEvent.click(
+			screen.getByRole("button", { name: /Open beta\/workspace-test\.txt in Files/ }),
+		);
+		expect(onOpenFile).toHaveBeenCalledWith("beta/workspace-test.txt");
+	});
+
 	it("offers Review when a handler is provided", async () => {
 		const onReview = vi.fn();
 		render(<TurnChangedFiles diff={diff()} onReview={onReview} />);
@@ -239,6 +293,10 @@ describe("TurnChangedFiles", () => {
 		expect(await screen.findByRole("tooltip")).toHaveTextContent("src/a.ts");
 	});
 
+	// With no command cwd in the turn there is no reliable worktree root to trim
+	// against, so the row shows the plain basename rather than a fabricated
+	// `wexaai-21/...` prefix (that leading segment is the worktree directory, not a
+	// workspace path). The tooltip still carries the full absolute path.
 	it("resolves a turn-diff basename against the turn's Edited path for the tooltip", async () => {
 		const user = userEvent.setup();
 		render(
@@ -270,7 +328,7 @@ describe("TurnChangedFiles", () => {
 				]}
 			/>,
 		);
-		await user.hover(screen.getByText("wexaai-21/random_words_1.txt"));
+		await user.hover(screen.getByText("random_words_1.txt"));
 		expect(await screen.findByRole("tooltip")).toHaveTextContent(
 			"~/.ao/dev/data/worktrees/wexaai/wexaai-21/random_words_1.txt",
 		);

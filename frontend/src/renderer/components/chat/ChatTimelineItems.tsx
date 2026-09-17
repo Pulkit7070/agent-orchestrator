@@ -2517,10 +2517,14 @@ export function TurnChangedFiles({
 							<span className="sr-only">{status.label}</span>
 							<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
 							<span
-								className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
+								className="min-w-0 flex-1 truncate text-left text-[12px] text-foreground/80 [direction:rtl]"
 								title=""
 							>
-								{openPath}
+								{/* Full paths render here, so tail-truncation would clip the filename
+								    (`frontend/src/…`). RTL direction moves the ellipsis to the head
+								    (`…/chat/ChatTimelineItems.tsx`), keeping the segment the user scans
+								    for. `bdi` isolates the path so RTL cannot reorder its segments. */}
+								<bdi>{openPath}</bdi>
 							</span>
 							{file.additions > 0 ? (
 								<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
@@ -2649,12 +2653,14 @@ function FileLocationLabel({
 				    path tooltip below appears — otherwise hover shows the basename. */}
 				<span
 					className={cn(
-						"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
+						"min-w-0 truncate text-left text-[11.5px] text-foreground/65 outline-none [direction:rtl]",
 						className,
 					)}
 					title=""
 				>
-					{displayPath ?? fileBasename(path)}
+					{/* RTL keeps the ellipsis at the head so a full `displayPath` never clips
+					    its filename; `bdi` stops RTL from reordering the path segments. */}
+					<bdi>{displayPath ?? fileBasename(path)}</bdi>
 				</span>
 			</TooltipTrigger>
 			<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
