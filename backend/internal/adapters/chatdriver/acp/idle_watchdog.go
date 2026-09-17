@@ -28,36 +28,59 @@ func idleStallItemID(turnID string) string {
 	return "acp-idle:" + turnID
 }
 
-// noteActivity records that the provider produced a signal on the active turn.
+// noteActivity records that the provider produced a signal on the active turn. If
+// a stall is currently surfaced it also wakes the watchdog so the row settles as
+// soon as output resumes, rather than lingering until the timer next fires.
 func (c *conversation) noteActivity() {
 	c.lastActivityNanos.Store(time.Now().UnixNano())
+	if !c.stallOpen.Load() {
+		return
+	}
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
 }
 
-// markIdleStalled flips the turn into the stalled state, returning true only for
-// the transition so the surfaced row is emitted exactly once. It refuses once the
-// turn is no longer the active one or has begun settling, closing the race where a
-// watchdog tick in flight could re-surface a stall that finishPrompt just settled.
-func (c *conversation) markIdleStalled(turnID string) bool {
+// surfaceIdleStall emits the non-terminal "waiting" row exactly once for the given
+// turn. Marking and emitting happen under idleMu so settlement (which also takes
+// idleMu) cannot interleave between them; that guarantees the started event is never
+// stranded after a completed one. It refuses once the turn is no longer active or has
+// begun settling, so a tick in flight cannot re-surface a stall finishPrompt settled.
+func (c *conversation) surfaceIdleStall(turnID string, idle time.Duration) {
+	c.idleMu.Lock()
+	defer c.idleMu.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.idleStalled || c.activeTurn != turnID || c.settlingTurn == turnID {
-		return false
+	ok := !c.idleStalled && c.activeTurn == turnID && c.settlingTurn != turnID
+	if ok {
+		c.idleStalled = true
 	}
-	c.idleStalled = true
-	return true
+	c.mu.Unlock()
+	if !ok {
+		return
+	}
+	c.stallOpen.Store(true)
+	c.emitIdleStall(turnID, idle)
 }
 
-// clearIdleStall leaves the stalled state, returning true only when a stall was
-// actually open. finishPrompt and the watchdog both call it; the loser is a no-op
-// so the row is never settled twice.
-func (c *conversation) clearIdleStall() bool {
+// settleIdleStallIfOpen closes a surfaced stall with the given terminal-for-the-row
+// status, doing nothing when no stall is open. It takes idleMu so it is ordered
+// against surfaceIdleStall: whether it runs before or after a concurrent surface, the
+// completed event never precedes the started one and the row is never settled twice.
+func (c *conversation) settleIdleStallIfOpen(turnID string, status domain.ActivityStatus) {
+	c.idleMu.Lock()
+	defer c.idleMu.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.idleStalled {
-		return false
+	open := c.idleStalled
+	if open {
+		c.idleStalled = false
 	}
-	c.idleStalled = false
-	return true
+	c.mu.Unlock()
+	if !open {
+		return
+	}
+	c.stallOpen.Store(false)
+	c.settleIdleStall(turnID, status)
 }
 
 // watchTurnIdle surfaces, but never cancels, a turn whose agent has gone silent.
@@ -76,20 +99,23 @@ func (c *conversation) watchTurnIdle(ctx context.Context, turnID string) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.wake:
+			// Activity resumed while a stall was surfaced. Settle the row now as
+			// recovered instead of leaving it "waiting" until the timer next fires,
+			// which could be up to a full idle window away, and start a fresh window
+			// from this activity.
+			c.settleIdleStallIfOpen(turnID, domain.ActivityStatusRecovered)
+			timer.Reset(timeout)
 		case <-timer.C:
 			idle := time.Duration(time.Now().UnixNano() - c.lastActivityNanos.Load())
 			if idle < timeout {
 				// Activity resumed inside the window. Settle any surfaced stall as
 				// recovered, then wait out only the remaining idle time.
-				if c.clearIdleStall() {
-					c.settleIdleStall(turnID, domain.ActivityStatusRecovered)
-				}
+				c.settleIdleStallIfOpen(turnID, domain.ActivityStatusRecovered)
 				timer.Reset(timeout - idle)
 				continue
 			}
-			if c.markIdleStalled(turnID) {
-				c.emitIdleStall(turnID, idle)
-			}
+			c.surfaceIdleStall(turnID, idle)
 			timer.Reset(timeout)
 		}
 	}

@@ -140,6 +140,24 @@ type conversation struct {
 	// contention with the update path.
 	lastActivityNanos atomic.Int64
 
+	// idleMu serializes surfacing and settling the idle-stall row so the "waiting"
+	// started event and its completed event are emitted as an ordered pair. Without
+	// it a watchdog tick that has decided to surface a stall can be preempted by
+	// finishPrompt settling the row, leaving the started event to arrive after the
+	// completed one and stranding a running "waiting" row. idleMu is always taken
+	// before c.mu, and never held across emit.
+	idleMu sync.Mutex
+
+	// stallOpen mirrors whether an idle-stall row is currently surfaced. noteActivity
+	// reads it lock-free to decide whether resumed activity must wake the watchdog for
+	// immediate recovery instead of waiting out another idle window.
+	stallOpen atomic.Bool
+
+	// wake nudges the watchdog when activity resumes while a stall is surfaced, so the
+	// row settles as soon as output streams again rather than up to a full idle window
+	// later. It is buffered so noteActivity never blocks on the watchdog.
+	wake chan struct{}
+
 	eventMu      sync.RWMutex
 	events       chan ports.ChatEvent
 	eventsClosed bool
@@ -193,6 +211,7 @@ func newConversation(
 		nestedMessages:   make(map[string]nestedMessageState),
 		tools:            make(map[string]*toolState),
 		events:           make(chan ports.ChatEvent, eventBuffer),
+		wake:             make(chan struct{}, 1),
 		extensionFor:     extensionFor,
 		extensionMethods: reverseAliases,
 	}
@@ -515,6 +534,7 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 	c.activeTurn = turn.id
 	c.settlingTurn = ""
 	c.idleStalled = false
+	c.stallOpen.Store(false)
 	turnCtx, cancel := context.WithCancel(context.Background())
 	c.turnCancel = cancel
 	sessionID := c.sessionID
@@ -582,9 +602,7 @@ func (c *conversation) finishPrompt(
 	// surfaced idle row here, before ChatEventTurnCompleted, so the running "waiting
 	// for the agent" activity closes rather than lingering when the watchdog is
 	// cancelled on return.
-	if c.clearIdleStall() {
-		c.settleIdleStall(turnID, domain.ActivityStatusCompleted)
-	}
+	c.settleIdleStallIfOpen(turnID, domain.ActivityStatusCompleted)
 	interruptedLocally := false
 	if interrupt != nil && interrupt.turnID == turnID {
 		// ACP cancellation and Prompt completion can race. Wait for the sender's
