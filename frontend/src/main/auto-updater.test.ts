@@ -901,7 +901,9 @@ describe("startAutoUpdates", () => {
 
     expect(setIntervalSpy).toHaveBeenCalledTimes(2);
     expect(
-      setIntervalSpy.mock.calls.map(([, delay]) => delay).sort((a, b) => a - b),
+      setIntervalSpy.mock.calls
+        .map(([, delay]) => delay)
+        .sort((a, b) => (a ?? 0) - (b ?? 0)),
     ).toEqual([30 * 60 * 1000, 24 * 60 * 60 * 1000]);
   });
 
