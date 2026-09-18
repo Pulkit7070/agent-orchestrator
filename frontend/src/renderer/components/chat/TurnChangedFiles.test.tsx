@@ -6,18 +6,18 @@ import { ActivityRow, TurnChangedFiles } from "./ChatTimelineItems";
 import { ActivityRun } from "./ActivityRun";
 import type { ConversationActivity, TurnDiff } from "../../types/conversation";
 import type { WorkspaceFileSummary } from "../../hooks/useSessionWorkspaceFiles";
-import { useSessionWorkspaceFileList } from "../../hooks/useSessionWorkspaceFiles";
+import { useSessionWorkspaceChangedFiles } from "../../hooks/useSessionWorkspaceFiles";
 import { TooltipProvider } from "../ui/tooltip";
 
-// The card now resolves each row's repository-qualified open path against the real
-// session workspace file list (the same list the click handler matches), so tests
-// seed that list directly instead of relying on a client-side path heuristic.
+// The card repo-qualifies each row against the session's changed files (read from
+// cache, the same repo-qualified list the click resolver matches), so tests seed
+// that list directly instead of relying on a client-side path heuristic.
 vi.mock("../../hooks/useSessionWorkspaceFiles", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../../hooks/useSessionWorkspaceFiles")>();
-	return { ...actual, useSessionWorkspaceFileList: vi.fn(() => [] as WorkspaceFileSummary[]) };
+	return { ...actual, useSessionWorkspaceChangedFiles: vi.fn(() => [] as WorkspaceFileSummary[]) };
 });
 
-const mockWorkspaceFileList = vi.mocked(useSessionWorkspaceFileList);
+const mockWorkspaceFileList = vi.mocked(useSessionWorkspaceChangedFiles);
 
 function seedWorkspaceFiles(paths: string[]) {
 	mockWorkspaceFileList.mockReturnValue(
@@ -119,54 +119,28 @@ describe("TurnChangedFiles", () => {
 		expect(onOpenFile).toHaveBeenCalledWith("alpha/workspace-test.txt");
 	});
 
-	// Two repos in one workspace each change a file of the same name. With both
-	// entries in the workspace file list, each row must resolve to and open its own
-	// repo's file, never collapse both to a single bare basename.
-	it("keeps two same-named files in different repos distinct", async () => {
+	// Two repos in one workspace each change a same-named file. The daemon stores the
+	// provider path verbatim, so both diff rows arrive as the byte-identical bare
+	// `workspace-test.txt` and no display-layer resolver can tell them apart. The card
+	// must show the honest bare basename for both rather than guess a repo and name
+	// the wrong one (the #5366 mislabel). Full disambiguation needs a repo-qualified
+	// path from the daemon, which the diff payload does not carry.
+	it("keeps the honest bare path when two repos change a same-named file", () => {
 		seedWorkspaceFiles(["alpha/workspace-test.txt", "beta/workspace-test.txt"]);
-		const onOpenFile = vi.fn();
 		render(
 			<TurnChangedFiles
 				sessionId="session-1"
 				diff={{
 					files: [
-						{ path: "alpha/workspace-test.txt", additions: 1, deletions: 0, status: "added" },
-						{ path: "beta/workspace-test.txt", additions: 2, deletions: 0, status: "added" },
+						{ path: "workspace-test.txt", additions: 1, deletions: 0, status: "added" },
+						{ path: "workspace-test.txt", additions: 2, deletions: 0, status: "added" },
 					],
 				}}
-				onOpenFile={onOpenFile}
 			/>,
 		);
-		expect(screen.getByText("alpha/workspace-test.txt")).toBeInTheDocument();
-		expect(screen.getByText("beta/workspace-test.txt")).toBeInTheDocument();
-		await userEvent.click(
-			screen.getByRole("button", { name: /Open beta\/workspace-test\.txt in Files/ }),
-		);
-		expect(onOpenFile).toHaveBeenCalledWith("beta/workspace-test.txt");
-	});
-
-	// An absolute worktree path in the diff row resolves to its repo-relative
-	// workspace entry, so the label and open target stay repository-qualified.
-	it("resolves an absolute turn diff path against the workspace file list", async () => {
-		const cwd = "/Users/me/.ao/dev/data/worktrees/demo/demo-1";
-		seedWorkspaceFiles(["frontend/index.ts", "backend/index.ts"]);
-		const onOpenFile = vi.fn();
-		render(
-			<TurnChangedFiles
-				sessionId="session-1"
-				diff={{
-					files: [
-						{ path: `${cwd}/frontend/index.ts`, additions: 1, deletions: 0, status: "modified" },
-						{ path: `${cwd}/backend/index.ts`, additions: 2, deletions: 0, status: "modified" },
-					],
-				}}
-				onOpenFile={onOpenFile}
-			/>,
-		);
-		await userEvent.click(screen.getByRole("button", { name: /Open frontend\/index\.ts in Files/ }));
-		expect(onOpenFile).toHaveBeenCalledWith("frontend/index.ts");
-		await userEvent.click(screen.getByRole("button", { name: /Open backend\/index\.ts in Files/ }));
-		expect(onOpenFile).toHaveBeenCalledWith("backend/index.ts");
+		expect(screen.getAllByText("workspace-test.txt")).toHaveLength(2);
+		expect(screen.queryByText("alpha/workspace-test.txt")).not.toBeInTheDocument();
+		expect(screen.queryByText("beta/workspace-test.txt")).not.toBeInTheDocument();
 	});
 
 	it("offers Review when a handler is provided", async () => {

@@ -21,14 +21,14 @@ export function looksAbsolutePath(path: string): boolean {
 	return path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path);
 }
 
-function rememberTurnPathHint(byBase: Map<string, string[]>, absolutePath: string) {
+// Dedups with a `Set` so collecting hints stays linear even when a long turn edits
+// the same basename across many repos; the public `byBase` is materialized to arrays
+// once at the end of `turnPathHints`.
+function rememberTurnPathHint(byBase: Map<string, Set<string>>, absolutePath: string) {
 	const base = fileBasename(absolutePath);
 	const candidates = byBase.get(base);
-	if (!candidates) {
-		byBase.set(base, [absolutePath]);
-		return;
-	}
-	if (!candidates.includes(absolutePath)) candidates.push(absolutePath);
+	if (candidates) candidates.add(absolutePath);
+	else byBase.set(base, new Set([absolutePath]));
 }
 
 /**
@@ -54,19 +54,21 @@ function matchTurnCandidate(relPath: string, hints: TurnPathHints): string | und
 }
 
 export function turnPathHints(items: ConversationItem[] | undefined): TurnPathHints {
-	const byBase = new Map<string, string[]>();
+	const collected = new Map<string, Set<string>>();
 	let cwd: string | undefined;
-	if (!items?.length) return { byBase, cwd };
+	if (!items?.length) return { byBase: new Map(), cwd };
 
 	for (const item of items) {
 		if (item.kind !== "activity") continue;
 		if (!cwd && item.detail?.cwd) cwd = item.detail.cwd;
 		if (item.activityKind !== "file_change") continue;
 		for (const file of fileChangeFiles(item)) {
-			if (looksAbsolutePath(file.path)) rememberTurnPathHint(byBase, file.path);
-			if (file.oldPath && looksAbsolutePath(file.oldPath)) rememberTurnPathHint(byBase, file.oldPath);
+			if (looksAbsolutePath(file.path)) rememberTurnPathHint(collected, file.path);
+			if (file.oldPath && looksAbsolutePath(file.oldPath)) rememberTurnPathHint(collected, file.oldPath);
 		}
 	}
+	const byBase = new Map<string, string[]>();
+	for (const [base, candidates] of collected) byBase.set(base, [...candidates]);
 	return { byBase, cwd };
 }
 

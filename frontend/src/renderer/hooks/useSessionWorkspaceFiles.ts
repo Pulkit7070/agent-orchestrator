@@ -259,24 +259,24 @@ export function useSessionWorkspaceFilesChangedCount(sessionId: string | undefin
 
 const EMPTY_WORKSPACE_FILES: WorkspaceFileSummary[] = [];
 
-// The workspace-relative file list for a session, from the same warm summary
-// query the changed-count above shares. Turn changed-files rows use it to render
-// and open the repository-qualified path (`alpha/workspace-test.txt`) resolved
-// against real workspace data instead of guessing from turn hints. Returns an
-// empty list until the query has data, so callers fall back to the raw row path.
-export function useSessionWorkspaceFileList(
+// The session's changed files, read passively from the warm summary query that the
+// inspector's changed-count keeps alive. `enabled: false` means this never starts
+// its own fetch or opens the file-watcher stream, so rendering a turn changed-files
+// card cannot re-enable the workspace query for a session that opted out of it
+// (browser-only sessions pass `undefined` to the changed-count above for exactly
+// that reason). It only reflects data already in cache and falls back to an empty
+// list otherwise, so callers keep the raw row path until the inspector has loaded.
+//
+// Filtered to changed files (like the changed-count) rather than the whole tracked
+// tree: a turn's rows are changes, so matching against the change set avoids
+// resolving a row onto an unrelated unchanged file that merely shares a basename.
+export function useSessionWorkspaceChangedFiles(
 	sessionId: string | undefined,
 ): WorkspaceFileSummary[] {
-	const queryClient = useQueryClient();
 	const query = useQuery({
 		...sessionWorkspaceFilesQueryOptions(sessionId ?? ""),
-		enabled: Boolean(sessionId),
-		refetchInterval: false,
-		select: (data: WorkspaceFilesResponse) => data.files,
+		enabled: false,
+		select: (data: WorkspaceFilesResponse) => data.files.filter(isChangedWorkspaceFile),
 	});
-	useEffect(() => {
-		if (!sessionId) return;
-		return subscribeWorkspaceFileChanges(sessionId, queryClient);
-	}, [queryClient, sessionId]);
-	return (sessionId ? query.data : undefined) ?? EMPTY_WORKSPACE_FILES;
+	return query.data ?? EMPTY_WORKSPACE_FILES;
 }

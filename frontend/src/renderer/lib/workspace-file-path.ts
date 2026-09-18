@@ -26,16 +26,6 @@ export function matchWorkspaceFilePath(
 		files.find((file) => file.path === normalized);
 	if (exact) return exact.path;
 
-	// The input already contains the workspace-relative path as a tail: an absolute
-	// worktree path (`/…/worktrees/demo/frontend/index.ts`) or a path with extra
-	// leading segments. Prefer the longest matching entry so a deeper repo-qualified
-	// path wins over a bare basename. The longest tail of a fixed string is unique,
-	// so this never has to guess between two same-length candidates.
-	const inputTail = files
-		.filter((file) => normalized.endsWith(`/${file.path}`))
-		.sort((a, b) => b.path.length - a.path.length);
-	if (inputTail.length > 0) return inputTail[0]!.path;
-
 	const suffix = files.find(
 		(file) => file.path.endsWith(`/${normalized}`) || file.path.endsWith(`/${rawPath}`),
 	);
@@ -46,4 +36,30 @@ export function matchWorkspaceFilePath(
 	if (byBase.length === 1) return byBase[0]!.path;
 
 	return normalized;
+}
+
+/**
+ * Repo-qualify a turn changed-files row for display, but only when the answer is
+ * unambiguous. The turn diff stores the provider's path verbatim, so a file changed
+ * in a multi-repo workspace arrives as a bare `workspace-test.txt`, while the
+ * workspace file list is repo-qualified (`alpha/workspace-test.txt`). When exactly
+ * one changed file matches the row we show that qualified path; when two repos
+ * changed a same-named file the row is genuinely ambiguous from this data, so we
+ * keep the bare path rather than name the wrong repo.
+ *
+ * Unlike `matchWorkspaceFilePath` (the click resolver, which must always return a
+ * best-effort open target) this returns the row unchanged on any ambiguity, so the
+ * label never claims a repository the file may not live in.
+ */
+export function qualifyTurnDiffPath(
+	rawPath: string,
+	changedFiles: readonly WorkspaceFileSummary[],
+): string {
+	const normalized = normalizeWorkspacePath(rawPath);
+	if (!normalized) return rawPath;
+
+	if (changedFiles.some((file) => file.path === normalized)) return normalized;
+
+	const matches = changedFiles.filter((file) => file.path.endsWith(`/${normalized}`));
+	return matches.length === 1 ? matches[0]!.path : normalized;
 }

@@ -91,8 +91,8 @@ import {
 	type TurnDiff,
 } from "../../types/conversation";
 import { resolveTurnFilePath, turnPathHints } from "../../lib/turn-file-open-path";
-import { matchWorkspaceFilePath } from "../../lib/workspace-file-path";
-import { useSessionWorkspaceFileList } from "../../hooks/useSessionWorkspaceFiles";
+import { qualifyTurnDiffPath } from "../../lib/workspace-file-path";
+import { useSessionWorkspaceChangedFiles } from "../../hooks/useSessionWorkspaceFiles";
 import {
 	parseBrowserAnnotationMessage,
 	type ParsedBrowserAnnotationMessage,
@@ -2529,15 +2529,18 @@ export function TurnChangedFiles({
 	 */
 	items?: ConversationItem[];
 	/**
-	 * Session whose workspace file list resolves each row's repository-qualified
-	 * open path. This is the same list the click handler matches against, so the
-	 * label and the file it opens are the same string by construction.
+	 * Session whose changed-file list repo-qualifies each row's path when it can be
+	 * done unambiguously (`alpha/workspace-test.txt` rather than a bare
+	 * `workspace-test.txt`). Read passively from cache: the card never fetches or
+	 * opens a watcher of its own. The label and this row's open argument are the same
+	 * string; the file a click ultimately opens is resolved fresh against the current
+	 * workspace, so it can differ if the tree changed since render.
 	 */
 	sessionId?: string;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const pathHints = useMemo(() => turnPathHints(items), [items]);
-	const workspaceFiles = useSessionWorkspaceFileList(sessionId);
+	const changedFiles = useSessionWorkspaceChangedFiles(sessionId);
 	if (diff.files.length === 0) return null;
 
 	const previewLimit = 4;
@@ -2569,7 +2572,7 @@ export function TurnChangedFiles({
 			</div>
 
 			<ul className="flex flex-col px-1.5 pb-1.5">
-				{visible.map((file) => {
+				{visible.map((file, index) => {
 					const status = diffStatusMark[file.status] ?? diffStatusMark.modified;
 					const rowClass =
 						"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-interactive-hover";
@@ -2577,10 +2580,13 @@ export function TurnChangedFiles({
 					const tooltipOldPath = file.oldPath
 						? resolveTurnFilePath(file.oldPath, pathHints)
 						: undefined;
-					// Resolve the label against the real workspace file list, the same
-					// list the click handler matches, so the row names exactly the file
-					// it opens. Before the list loads this returns the raw row path.
-					const openPath = matchWorkspaceFilePath(file.path, workspaceFiles);
+					// Repo-qualify the row against the session's changed files when it is
+					// unambiguous; a same-named file in two repos stays the bare path
+					// rather than naming the wrong repo. Before the list is cached this
+					// returns the raw row path. `|| basename` keeps a degenerate empty
+					// path (`""`, `"./"`) from rendering a blank, unlabeled row.
+					const openPath =
+						qualifyTurnDiffPath(file.path, changedFiles) || fileBasename(file.path);
 					const location = fileLocationLabel(tooltipPath, tooltipOldPath);
 
 					const body = (
@@ -2616,7 +2622,7 @@ export function TurnChangedFiles({
 					);
 
 					return (
-						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
+						<li key={`${index}-${file.status}-${file.oldPath ?? ""}-${file.path}`}>
 							{onOpenFile ? (
 								<Tooltip>
 									<TooltipTrigger asChild>
@@ -2718,8 +2724,11 @@ function FileLocationLabel({
 	const location = fileLocationLabel(locationPath ?? path, locationOldPath ?? oldPath);
 	// Head-truncation only helps a full `displayPath`, whose filename is at the tail.
 	// The basename-only call sites pass no `displayPath`, so leave their default
-	// tail-truncation alone rather than flip their ellipsis to the head.
-	const label = displayPath ?? fileBasename(path);
+	// tail-truncation alone rather than flip their ellipsis to the head. `||` (not
+	// `??`) so an empty `displayPath` falls back to the basename, matching the
+	// truthiness tests below rather than rendering a blank label.
+	const hasDisplayPath = Boolean(displayPath);
+	const label = displayPath || fileBasename(path);
 
 	return (
 		<Tooltip>
@@ -2729,14 +2738,14 @@ function FileLocationLabel({
 				<span
 					className={cn(
 						"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
-						displayPath ? "text-left [direction:rtl]" : undefined,
+						hasDisplayPath ? "text-left [direction:rtl]" : undefined,
 						className,
 					)}
 					title=""
 				>
 					{/* RTL keeps the ellipsis at the head so a full `displayPath` never clips
 					    its filename; `bdi` stops RTL from reordering the path segments. */}
-					{displayPath ? <bdi>{label}</bdi> : label}
+					{hasDisplayPath ? <bdi>{label}</bdi> : label}
 				</span>
 			</TooltipTrigger>
 			<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
