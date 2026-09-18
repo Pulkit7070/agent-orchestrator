@@ -33,6 +33,15 @@ describe("workspaceRelativeOpenPath", () => {
 			workspaceRelativeOpenPath("/Users/me/.ao/dev/data/worktrees/demo/demo-1/frontend/index.ts"),
 		).toBe("index.ts");
 	});
+
+	it("anchors on the shared worktree dir when cwd is a subdirectory", () => {
+		// The recorded cwd is a subdirectory the agent ran a command in; the edited
+		// file lives elsewhere in the same worktree. Strip the shared root so the
+		// sibling segment survives instead of collapsing to the basename.
+		expect(workspaceRelativeOpenPath(`${cwd}/backend/x.ts`, `${cwd}/frontend`)).toBe(
+			"backend/x.ts",
+		);
+	});
 });
 
 describe("turnFileOpenPath", () => {
@@ -59,6 +68,20 @@ describe("turnFileOpenPath", () => {
 			fileChangeActivity(`${cwd}/other/a.ts`),
 		]);
 		expect(turnFileOpenPath("src/a.ts", hints)).toBe("src/a.ts");
+	});
+
+	it("keeps a row's own segments when a matched hint has no cwd to strip", () => {
+		// The hint matches but there is no cwd anchor, so trimming it yields only the
+		// basename. That is less than the row already carried, so keep the row path.
+		const hints = turnPathHints([fileChangeActivity(`${cwd}/src/a.ts`)]);
+		expect(hints.cwd).toBeUndefined();
+		expect(turnFileOpenPath("src/a.ts", hints)).toBe("src/a.ts");
+	});
+
+	it("resolves a bare row against a hint edited outside the recorded cwd", () => {
+		// cwd is a subdirectory; the hint lives in a sibling directory of the worktree.
+		const hints = { ...turnPathHints([fileChangeActivity(`${cwd}/backend/x.ts`)]), cwd: `${cwd}/frontend` };
+		expect(turnFileOpenPath("x.ts", hints)).toBe("backend/x.ts");
 	});
 
 	it("resolves each subdir-qualified row to its own repo when basenames collide", () => {

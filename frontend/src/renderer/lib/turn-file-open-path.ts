@@ -80,19 +80,33 @@ export function resolveTurnFilePath(path: string, hints: TurnPathHints): string 
 	return path;
 }
 
+/** Longest shared leading directory of two absolute paths (`""` if none). */
+function commonDirPrefix(a: string, b: string): string {
+	const aSegments = a.split("/");
+	const bSegments = b.split("/");
+	const shared: string[] = [];
+	const limit = Math.min(aSegments.length, bSegments.length);
+	for (let i = 0; i < limit; i++) {
+		if (aSegments[i] !== bSegments[i]) break;
+		shared.push(aSegments[i]!);
+	}
+	return shared.join("/");
+}
+
 /**
- * Strip a worktree root and keep enough suffix to disambiguate duplicate basenames.
- * Without a cwd to anchor against there is no reliable workspace prefix: the leading
- * segments of the absolute path are the worktree directory (`.../worktrees/demo/demo-1`),
- * not workspace path, so slicing them in would name a directory the user cannot find.
- * Fall back to the basename in that case rather than inventing a qualifier.
+ * Strip the worktree root and keep enough suffix to disambiguate duplicate basenames.
+ * The cwd is often a subdirectory of the worktree (an agent runs a command in
+ * `frontend/` then edits `backend/x.ts`), so anchor on the deepest directory the file
+ * and the cwd share rather than requiring the file to sit under the cwd: that keeps
+ * `backend/x.ts` instead of collapsing to `x.ts`, while never prefixing a segment that
+ * is not already in the path. Without a cwd to anchor against there is no reliable
+ * workspace prefix, so fall back to the basename rather than inventing a qualifier.
  */
 export function workspaceRelativeOpenPath(absolutePath: string, cwd?: string): string {
 	const normalized = absolutePath.replace(/\\/g, "/");
 	if (cwd) {
-		const root = cwd.replace(/\\/g, "/").replace(/\/$/, "");
-		if (normalized === root) return fileBasename(normalized);
-		if (normalized.startsWith(`${root}/`)) {
+		const root = commonDirPrefix(normalized, cwd.replace(/\\/g, "/").replace(/\/$/, ""));
+		if (root && normalized.startsWith(`${root}/`)) {
 			return normalized.slice(root.length + 1);
 		}
 	}
@@ -104,7 +118,12 @@ export function turnFileOpenPath(path: string, hints: TurnPathHints): string {
 	const normalized = path.replace(/^\.\//, "");
 	if (!looksAbsolutePath(normalized)) {
 		const matched = matchTurnCandidate(normalized, hints);
-		if (matched) return workspaceRelativeOpenPath(matched, hints.cwd);
+		if (matched) {
+			// With no root to strip the hint collapses to a basename; never hand back
+			// less qualification than the row already carried (`src/a.ts` -> `a.ts`).
+			const open = workspaceRelativeOpenPath(matched, hints.cwd);
+			return open.includes("/") || !normalized.includes("/") ? open : normalized;
+		}
 		return normalized;
 	}
 	return workspaceRelativeOpenPath(normalized, hints.cwd);
