@@ -89,7 +89,9 @@ import {
 	type ConversationItem,
 	type TurnDiff,
 } from "../../types/conversation";
-import { resolveTurnFilePath, turnFileOpenPath, turnPathHints } from "../../lib/turn-file-open-path";
+import { resolveTurnFilePath, turnPathHints } from "../../lib/turn-file-open-path";
+import { matchWorkspaceFilePath } from "../../lib/workspace-file-path";
+import { useSessionWorkspaceFileList } from "../../hooks/useSessionWorkspaceFiles";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
 	hour: "2-digit",
@@ -2454,6 +2456,7 @@ export function TurnChangedFiles({
 	onReview,
 	onOpenFile,
 	items,
+	sessionId,
 }: {
 	diff: TurnDiff;
 	live?: boolean;
@@ -2467,9 +2470,16 @@ export function TurnChangedFiles({
 	 * carry the absolute worktree path the Edited tooltip already shows.
 	 */
 	items?: ConversationItem[];
+	/**
+	 * Session whose workspace file list resolves each row's repository-qualified
+	 * open path. This is the same list the click handler matches against, so the
+	 * label and the file it opens are the same string by construction.
+	 */
+	sessionId?: string;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const pathHints = useMemo(() => turnPathHints(items), [items]);
+	const workspaceFiles = useSessionWorkspaceFileList(sessionId);
 	if (diff.files.length === 0) return null;
 
 	const previewLimit = 4;
@@ -2509,7 +2519,10 @@ export function TurnChangedFiles({
 					const tooltipOldPath = file.oldPath
 						? resolveTurnFilePath(file.oldPath, pathHints)
 						: undefined;
-					const openPath = turnFileOpenPath(file.path, pathHints);
+					// Resolve the label against the real workspace file list, the same
+					// list the click handler matches, so the row names exactly the file
+					// it opens. Before the list loads this returns the raw row path.
+					const openPath = matchWorkspaceFilePath(file.path, workspaceFiles);
 					const location = fileLocationLabel(tooltipPath, tooltipOldPath);
 
 					const body = (
@@ -2645,6 +2658,10 @@ function FileLocationLabel({
 	displayPath?: string;
 }) {
 	const location = fileLocationLabel(locationPath ?? path, locationOldPath ?? oldPath);
+	// Head-truncation only helps a full `displayPath`, whose filename is at the tail.
+	// The basename-only call sites pass no `displayPath`, so leave their default
+	// tail-truncation alone rather than flip their ellipsis to the head.
+	const label = displayPath ?? fileBasename(path);
 
 	return (
 		<Tooltip>
@@ -2653,14 +2670,15 @@ function FileLocationLabel({
 				    path tooltip below appears — otherwise hover shows the basename. */}
 				<span
 					className={cn(
-						"min-w-0 truncate text-left text-[11.5px] text-foreground/65 outline-none [direction:rtl]",
+						"min-w-0 truncate text-[11.5px] text-foreground/65 outline-none",
+						displayPath ? "text-left [direction:rtl]" : undefined,
 						className,
 					)}
 					title=""
 				>
 					{/* RTL keeps the ellipsis at the head so a full `displayPath` never clips
 					    its filename; `bdi` stops RTL from reordering the path segments. */}
-					<bdi>{displayPath ?? fileBasename(path)}</bdi>
+					{displayPath ? <bdi>{label}</bdi> : label}
 				</span>
 			</TooltipTrigger>
 			<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">

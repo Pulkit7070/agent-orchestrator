@@ -36,4 +36,22 @@ describe("matchWorkspaceFilePath", () => {
 		expect(matchWorkspaceFilePath("frontend/index.ts", duplicateFiles)).toBe("frontend/index.ts");
 		expect(matchWorkspaceFilePath("backend/index.ts", duplicateFiles)).toBe("backend/index.ts");
 	});
+
+	it("resolves an absolute worktree path to its repo-relative entry", () => {
+		const cwd = "/Users/me/.ao/dev/data/worktrees/demo/demo-1";
+		const duplicateFiles = [
+			{ path: "frontend/index.ts", status: "modified" as const, additions: 1, deletions: 0, binary: false, size: 12 },
+			{ path: "backend/index.ts", status: "modified" as const, additions: 1, deletions: 0, binary: false, size: 12 },
+		];
+		expect(matchWorkspaceFilePath(`${cwd}/frontend/index.ts`, duplicateFiles)).toBe("frontend/index.ts");
+		expect(matchWorkspaceFilePath(`${cwd}/backend/index.ts`, duplicateFiles)).toBe("backend/index.ts");
+	});
+
+	it("prefers the longest tail so a repo-qualified entry beats a bare basename", () => {
+		const mixedFiles = [
+			{ path: "index.ts", status: "modified" as const, additions: 1, deletions: 0, binary: false, size: 12 },
+			{ path: "frontend/index.ts", status: "modified" as const, additions: 1, deletions: 0, binary: false, size: 12 },
+		];
+		expect(matchWorkspaceFilePath("/repo/frontend/index.ts", mixedFiles)).toBe("frontend/index.ts");
+	});
 });

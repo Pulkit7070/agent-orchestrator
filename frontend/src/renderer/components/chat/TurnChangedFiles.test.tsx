@@ -1,11 +1,37 @@
 import { render as rtlRender, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityRow, TurnChangedFiles } from "./ChatTimelineItems";
 import { ActivityRun } from "./ActivityRun";
 import type { ConversationActivity, TurnDiff } from "../../types/conversation";
+import type { WorkspaceFileSummary } from "../../hooks/useSessionWorkspaceFiles";
+import { useSessionWorkspaceFileList } from "../../hooks/useSessionWorkspaceFiles";
 import { TooltipProvider } from "../ui/tooltip";
+
+// The card now resolves each row's repository-qualified open path against the real
+// session workspace file list (the same list the click handler matches), so tests
+// seed that list directly instead of relying on a client-side path heuristic.
+vi.mock("../../hooks/useSessionWorkspaceFiles", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../hooks/useSessionWorkspaceFiles")>();
+	return { ...actual, useSessionWorkspaceFileList: vi.fn(() => [] as WorkspaceFileSummary[]) };
+});
+
+const mockWorkspaceFileList = vi.mocked(useSessionWorkspaceFileList);
+
+function seedWorkspaceFiles(paths: string[]) {
+	mockWorkspaceFileList.mockReturnValue(
+		paths.map((path) => ({ path, status: "added", additions: 1, deletions: 0 }) as WorkspaceFileSummary),
+	);
+}
+
+beforeEach(() => {
+	mockWorkspaceFileList.mockReturnValue([]);
+});
+
+afterEach(() => {
+	vi.clearAllMocks();
+});
 
 function render(ui: ReactElement) {
 	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
@@ -54,51 +80,18 @@ describe("TurnChangedFiles", () => {
 	});
 
 	// In a real multi-repo workspace the daemon stores the provider's repo-relative
-	// path verbatim (`workspace-test.txt`), with no repository qualifier. The segment
-	// that tells two same-named files in different repos apart is reconstructed on the
-	// client from the turn's absolute file_change paths and cwd (`turnFileOpenPath`),
-	// which is the same value the row opens in the Files panel. The card must show that
-	// reconstructed, repository-qualified path, not the bare basename the daemon stored.
-	it("shows the repository-qualified path reconstructed from the turn's hints", () => {
-		const cwd = "/Users/me/.ao/dev/data/worktrees/demo/demo-1";
+	// path verbatim (`workspace-test.txt`), with no repository qualifier. The card
+	// resolves the row against the session workspace file list, the same list the
+	// click handler matches, and shows that repository-qualified path
+	// (`alpha/workspace-test.txt`) rather than the bare basename the daemon stored.
+	it("shows the repository-qualified path resolved from the workspace file list", () => {
+		seedWorkspaceFiles(["alpha/workspace-test.txt"]);
 		render(
 			<TurnChangedFiles
+				sessionId="session-1"
 				diff={{
 					files: [{ path: "workspace-test.txt", additions: 1, deletions: 0, status: "added" }],
 				}}
-				items={[
-					{
-						kind: "activity",
-						id: "cmd-1",
-						sequence: 1,
-						revision: 0,
-						activityKind: "command",
-						status: "completed",
-						summary: "Ran command",
-						detail: { cwd, command: "ls" },
-						createdAt: new Date().toISOString(),
-					},
-					{
-						kind: "activity",
-						id: "fc-1",
-						sequence: 2,
-						revision: 0,
-						activityKind: "file_change",
-						status: "completed",
-						summary: "Edited files",
-						detail: {
-							files: [
-								{
-									path: `${cwd}/alpha/workspace-test.txt`,
-									additions: 1,
-									deletions: 0,
-									status: "added",
-								},
-							],
-						},
-						createdAt: new Date().toISOString(),
-					},
-				]}
 			/>,
 		);
 		expect(screen.getByText("alpha/workspace-test.txt")).toBeInTheDocument();
@@ -108,46 +101,14 @@ describe("TurnChangedFiles", () => {
 	// The label the row shows and the path it opens must be the same repository-qualified
 	// string, so a click cannot open a different file than the one named on screen.
 	it("shows and opens the same repository-qualified path", async () => {
-		const cwd = "/Users/me/.ao/dev/data/worktrees/demo/demo-1";
+		seedWorkspaceFiles(["alpha/workspace-test.txt"]);
 		const onOpenFile = vi.fn();
 		render(
 			<TurnChangedFiles
+				sessionId="session-1"
 				diff={{
 					files: [{ path: "workspace-test.txt", additions: 1, deletions: 0, status: "added" }],
 				}}
-				items={[
-					{
-						kind: "activity",
-						id: "cmd-1",
-						sequence: 1,
-						revision: 0,
-						activityKind: "command",
-						status: "completed",
-						summary: "Ran command",
-						detail: { cwd, command: "ls" },
-						createdAt: new Date().toISOString(),
-					},
-					{
-						kind: "activity",
-						id: "fc-1",
-						sequence: 2,
-						revision: 0,
-						activityKind: "file_change",
-						status: "completed",
-						summary: "Edited files",
-						detail: {
-							files: [
-								{
-									path: `${cwd}/alpha/workspace-test.txt`,
-									additions: 1,
-									deletions: 0,
-									status: "added",
-								},
-							],
-						},
-						createdAt: new Date().toISOString(),
-					},
-				]}
 				onOpenFile={onOpenFile}
 			/>,
 		);
@@ -159,48 +120,20 @@ describe("TurnChangedFiles", () => {
 	});
 
 	// Two repos in one workspace each change a file of the same name. With both
-	// file_change entries in the turn, each subdir-qualified row must resolve to and
-	// open its own repo's file, never collapse both to a single bare basename.
+	// entries in the workspace file list, each row must resolve to and open its own
+	// repo's file, never collapse both to a single bare basename.
 	it("keeps two same-named files in different repos distinct", async () => {
-		const cwd = "/Users/me/.ao/dev/data/worktrees/demo/demo-1";
+		seedWorkspaceFiles(["alpha/workspace-test.txt", "beta/workspace-test.txt"]);
 		const onOpenFile = vi.fn();
 		render(
 			<TurnChangedFiles
+				sessionId="session-1"
 				diff={{
 					files: [
 						{ path: "alpha/workspace-test.txt", additions: 1, deletions: 0, status: "added" },
 						{ path: "beta/workspace-test.txt", additions: 2, deletions: 0, status: "added" },
 					],
 				}}
-				items={[
-					{
-						kind: "activity",
-						id: "cmd-1",
-						sequence: 1,
-						revision: 0,
-						activityKind: "command",
-						status: "completed",
-						summary: "Ran command",
-						detail: { cwd, command: "ls" },
-						createdAt: new Date().toISOString(),
-					},
-					{
-						kind: "activity",
-						id: "fc-1",
-						sequence: 2,
-						revision: 0,
-						activityKind: "file_change",
-						status: "completed",
-						summary: "Edited files",
-						detail: {
-							files: [
-								{ path: `${cwd}/alpha/workspace-test.txt`, additions: 1, deletions: 0, status: "added" },
-								{ path: `${cwd}/beta/workspace-test.txt`, additions: 2, deletions: 0, status: "added" },
-							],
-						},
-						createdAt: new Date().toISOString(),
-					},
-				]}
 				onOpenFile={onOpenFile}
 			/>,
 		);
@@ -210,6 +143,30 @@ describe("TurnChangedFiles", () => {
 			screen.getByRole("button", { name: /Open beta\/workspace-test\.txt in Files/ }),
 		);
 		expect(onOpenFile).toHaveBeenCalledWith("beta/workspace-test.txt");
+	});
+
+	// An absolute worktree path in the diff row resolves to its repo-relative
+	// workspace entry, so the label and open target stay repository-qualified.
+	it("resolves an absolute turn diff path against the workspace file list", async () => {
+		const cwd = "/Users/me/.ao/dev/data/worktrees/demo/demo-1";
+		seedWorkspaceFiles(["frontend/index.ts", "backend/index.ts"]);
+		const onOpenFile = vi.fn();
+		render(
+			<TurnChangedFiles
+				sessionId="session-1"
+				diff={{
+					files: [
+						{ path: `${cwd}/frontend/index.ts`, additions: 1, deletions: 0, status: "modified" },
+						{ path: `${cwd}/backend/index.ts`, additions: 2, deletions: 0, status: "modified" },
+					],
+				}}
+				onOpenFile={onOpenFile}
+			/>,
+		);
+		await userEvent.click(screen.getByRole("button", { name: /Open frontend\/index\.ts in Files/ }));
+		expect(onOpenFile).toHaveBeenCalledWith("frontend/index.ts");
+		await userEvent.click(screen.getByRole("button", { name: /Open backend\/index\.ts in Files/ }));
+		expect(onOpenFile).toHaveBeenCalledWith("backend/index.ts");
 	});
 
 	it("offers Review when a handler is provided", async () => {
@@ -226,7 +183,9 @@ describe("TurnChangedFiles", () => {
 		expect(onOpenFile).toHaveBeenCalledWith("src/a.ts");
 	});
 
-	it("opens a cwd-relative path from a turn diff basename", async () => {
+	// With no workspace list loaded the row falls back to the raw path the daemon
+	// stored, so the label and open target stay in sync with what is available.
+	it("falls back to the raw row path when no workspace list is available", async () => {
 		const onOpenFile = vi.fn();
 		render(
 			<TurnChangedFiles
@@ -251,39 +210,6 @@ describe("TurnChangedFiles", () => {
 		);
 		await userEvent.click(screen.getByRole("button", { name: /Open notes\.txt in Files/ }));
 		expect(onOpenFile).toHaveBeenCalledWith("notes.txt");
-	});
-
-	it("preserves duplicate-disambiguating suffixes for absolute turn diff paths", async () => {
-		const cwd = "/Users/me/.ao/dev/data/worktrees/demo/demo-1";
-		const onOpenFile = vi.fn();
-		render(
-			<TurnChangedFiles
-				diff={{
-					files: [
-						{ path: `${cwd}/frontend/index.ts`, additions: 1, deletions: 0, status: "modified" },
-						{ path: `${cwd}/backend/index.ts`, additions: 2, deletions: 0, status: "modified" },
-					],
-				}}
-				items={[
-					{
-						kind: "activity",
-						id: "a-1",
-						sequence: 1,
-						revision: 0,
-						activityKind: "command",
-						status: "completed",
-						summary: "Ran command",
-						detail: { cwd, command: "ls" },
-						createdAt: new Date().toISOString(),
-					},
-				]}
-				onOpenFile={onOpenFile}
-			/>,
-		);
-		await userEvent.click(screen.getByRole("button", { name: /Open frontend\/index\.ts in Files/ }));
-		expect(onOpenFile).toHaveBeenCalledWith("frontend/index.ts");
-		await userEvent.click(screen.getByRole("button", { name: /Open backend\/index\.ts in Files/ }));
-		expect(onOpenFile).toHaveBeenCalledWith("backend/index.ts");
 	});
 
 	it("shows the full path on hover", async () => {

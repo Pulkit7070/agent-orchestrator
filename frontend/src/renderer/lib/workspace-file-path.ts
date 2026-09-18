@@ -26,6 +26,16 @@ export function matchWorkspaceFilePath(
 		files.find((file) => file.path === normalized);
 	if (exact) return exact.path;
 
+	// The input already contains the workspace-relative path as a tail: an absolute
+	// worktree path (`/…/worktrees/demo/frontend/index.ts`) or a path with extra
+	// leading segments. Prefer the longest matching entry so a deeper repo-qualified
+	// path wins over a bare basename. The longest tail of a fixed string is unique,
+	// so this never has to guess between two same-length candidates.
+	const inputTail = files
+		.filter((file) => normalized.endsWith(`/${file.path}`))
+		.sort((a, b) => b.path.length - a.path.length);
+	if (inputTail.length > 0) return inputTail[0]!.path;
+
 	const suffix = files.find(
 		(file) => file.path.endsWith(`/${normalized}`) || file.path.endsWith(`/${rawPath}`),
 	);
