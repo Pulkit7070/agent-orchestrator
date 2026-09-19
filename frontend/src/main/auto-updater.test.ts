@@ -1852,7 +1852,7 @@ describe("startAutoUpdates", () => {
     intervalWithDelay(setIntervalSpy, 24 * 60 * 60 * 1000)();
     await flushMicrotasks();
 
-    expect(readUpdateSettings.mock.calls.length).toBeGreaterThan(readsBeforeRetry);
+    expect(readUpdateSettings.mock.calls.length).toBe(readsBeforeRetry + 1);
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
@@ -2128,6 +2128,7 @@ describe("startAutoUpdates", () => {
   it("reconciles the automatic scheduler when settings change at runtime", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
     let current: UpdateSettings = {
       enabled: false,
       channel: "latest",
@@ -2144,6 +2145,7 @@ describe("startAutoUpdates", () => {
     );
 
     await module.startAutoUpdates(stateDir);
+    // Two live timers: the retirement poll and the automatic-check timer.
     expect(setIntervalSpy).toHaveBeenCalledTimes(2);
 
     await module.setUpdateSettings(stateDir, { ...current, enabled: true });
@@ -2160,6 +2162,14 @@ describe("startAutoUpdates", () => {
 
     await module.setUpdateSettings(stateDir, { ...current, enabled: false });
     expect(latestInterval(setIntervalSpy).delay).toBe(24 * 60 * 60 * 1000);
+    // The cadence is one constant, so every reconcile above targets the interval
+    // the timer already runs at: the schedule stays a single unbroken timer,
+    // never torn down and re-armed. If a future per-channel cadence returns, this
+    // is the assertion that would flip and force the re-arm path to be covered.
+    expect(setIntervalSpy).toHaveBeenCalledTimes(2);
+    expect(clearIntervalSpy).not.toHaveBeenCalled();
+
+    // Discovery stays on when updates are disabled; only auto-download is off.
     await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
     expect(autoUpdater.autoDownload).toBe(false);

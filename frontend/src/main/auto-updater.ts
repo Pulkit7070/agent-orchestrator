@@ -333,6 +333,10 @@ let escalationStateDir: string | undefined;
 // needs consecutive automatic failures, and every launch supplies one, so users
 // who restart still trip it quickly; but a session left open continuously on a
 // broken updater now waits days rather than hours before the nudge appears.
+// Feature pins (a pr<N> channel) are the case a daily interval bites hardest: a
+// new build pushed to that PR is not noticed until relaunch, and the 30-minute
+// retirement poll only catches the PR closing, not a fresh build on it. Accepted
+// deliberately, since a pinned session is short-lived and relaunch re-checks.
 const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let automaticUpdateTimer: ReturnType<typeof setInterval> | undefined;
 let automaticUpdateTimerIntervalMs: number | undefined;
@@ -1889,6 +1893,13 @@ export function getUpdateStatus(): UpdateStatus {
   };
 }
 
+// The cadence is one number for every channel today, so this ignores its
+// argument. Kept as a settings-taking seam on purpose: it is the single place a
+// future per-channel cadence (for example a shorter interval for feature pins)
+// would branch, and the scheduler already carries the interval through
+// runAutomaticUpdateCheck's return value and re-arms when it changes, so
+// reintroducing a variable cadence stays a one-function change. The _settings
+// underscore is the signal that the parameter is deliberately unused for now.
 function automaticUpdateCheckInterval(_settings: UpdateSettings): number {
   return AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
 }
