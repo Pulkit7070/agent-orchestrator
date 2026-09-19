@@ -73,6 +73,18 @@ enum UpdateStage: Equatable {
     case complete
     case reopened
     case legacyComplete
+
+    // Whether this stage should bring the helper window on screen. The normal
+    // close-and-reopen path (.closing/.installing) stays silent; only the
+    // stall/failure paths that need the user's attention surface a window.
+    var presentsWindow: Bool {
+        switch self {
+        case .closing, .installing, .complete, .legacyComplete:
+            return false
+        case .recovery, .reopened:
+            return true
+        }
+    }
 }
 
 struct UpdateProgressState {
